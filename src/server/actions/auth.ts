@@ -1,6 +1,11 @@
 "use server";
 
 import { redirect } from "next/navigation";
+import { createHash, randomBytes, scrypt as scryptCallback, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
+import { eq, and, gt, isNull } from "drizzle-orm";
+
+import { db, notifications, passwordResetTokens, users } from "@/db";
 import { destroySession, requireUser, startSession } from "@/lib/auth";
 import { emailProvider } from "@/lib/email";
 import {
@@ -15,23 +20,42 @@ import {
   resetSchema,
 } from "@/lib/validators";
 import { generateToken } from "@/lib/utils";
-import { createHash } from "node:crypto";
-import {
-  addMockNotification,
-  addPasswordResetToken,
-  getMockUserByEmail,
-  getMockUserById,
-  mockStore,
-  updateMockUser,
-  updatePassword,
-  getPasswordResetToken,
-} from "@/server/mock-store";
 
-const RESET_BASE = `${process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
-  }/auth/reset-password`;
+const scrypt = promisify(scryptCallback);
+
+const RESET_BASE = `${
+  process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"
+}/auth/reset-password`;
 
 function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function hashPassword(password: string): Promise<string> {
+  const salt = randomBytes(16).toString("hex");
+  const derivedKey = (await scrypt(password, salt, 64)) as Buffer;
+
+  return `scrypt$${salt}$${derivedKey.toString("hex")}`;
+}
+
+async function verifyPassword(
+  password: string,
+  storedHash: string,
+): Promise<boolean> {
+  const [algorithm, salt, hash] = storedHash.split("$");
+
+  if (algorithm !== "scrypt" || !salt || !hash) {
+    return false;
+  }
+
+  const storedKey = Buffer.from(hash, "hex");
+  const derivedKey = (await scrypt(password, salt, storedKey.length)) as Buffer;
+
+  if (storedKey.length !== derivedKey.length) {
+    return false;
+  }
+
+  return timingSafeEqual(storedKey, derivedKey);
 }
 
 export async function registerAction(
@@ -53,50 +77,54 @@ export async function registerAction(
 
     const name = parsed.data.name.trim();
     const email = parsed.data.email.toLowerCase().trim();
-    const password = parsed.data.password;
+    const passwordHash = await hashPassword(parsed.data.password);
+    const now = new Date();
 
-    const existing = getMockUserByEmail(email);
+    const existing = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
 
-    if (existing) {
+    if (existing.length > 0) {
       return { error: "این نشانی ایمیل قبلاً ثبت شده است." };
     }
 
-    const now = new Date();
+    const inserted = await db
+      .insert(users)
+      .values({
+        email,
+        passwordHash,
+        name,
+        role: "CUSTOMER",
+        status: "ACTIVE",
+        avatarUrl: null,
+        bio: null,
+        emailVerifiedAt: now,
+        lastLoginAt: now,
+        createdAt: now,
+        updatedAt: now,
+      })
+      .returning({ id: users.id });
 
-    const nextId =
-      mockStore.users.reduce(
-        (max, user) => Math.max(max, user.id),
-        0,
-      ) + 1;
+    const user = inserted[0];
 
-    const user = {
-      id: nextId,
-      email,
-      passwordHash: "mock",
-      name,
-      role: "CUSTOMER" as const,
-      status: "ACTIVE" as const,
-      avatarUrl: null,
-      bio: null,
-      emailVerifiedAt: now,
-      lastLoginAt: now,
-      createdAt: now,
-      updatedAt: now,
-    };
-
-    mockStore.users.push(user);
-    mockStore.passwords.set(user.id, password);
-
-    addMockNotification(user.id, {
-      type: "SECURITY",
-      title: "به قالبی نو خوش آمدید",
-      body: "حساب کاربری شما با موفقیت ساخته شد.",
-    });
-
-    await startSession(user.id);
+    if (!user) {
+      throw new Error("User creation failed.");
+    }
 
     userId = user.id;
 
+    await db.insert(notifications).values({
+      userId,
+      type: "SECURITY",
+      title: "به قالبی نو خوش آمدید",
+      body: "حساب کاربری شما با موفقیت ساخته شد.",
+      link: null,
+      isRead: false,
+    });
+
+    await startSession(userId);
   } catch (err) {
     if (err instanceof AppError) {
       return { error: err.message };
@@ -107,7 +135,6 @@ export async function registerAction(
     return {
       error: "خطایی رخ داد. لطفاً دوباره تلاش کنید.",
     };
-
   }
 
   void userId;
@@ -133,26 +160,33 @@ export async function loginAction(
     const email = parsed.data.email.toLowerCase().trim();
     const password = parsed.data.password;
 
-    const user = getMockUserByEmail(email);
+    const result = await db
+      .select()
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
 
-    if (!user) {
+    const user = result[0];
+
+    if (!user || !(await verifyPassword(password, user.passwordHash))) {
       return { error: "ایمیل یا رمز عبور نادرست است." };
     }
 
-    const storedPassword = mockStore.passwords.get(user.id);
-
-    if (!storedPassword || storedPassword !== password) {
-      return { error: "ایمیل یا رمز عبور نادرست است." };
+    if (user.status !== "ACTIVE") {
+      return { error: "حساب کاربری شما فعال نیست." };
     }
 
-    updateMockUser(user.id, {
-      lastLoginAt: new Date(),
-    });
+    await db
+      .update(users)
+      .set({
+        lastLoginAt: new Date(),
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
 
     await startSession(user.id);
 
     role = user.role;
-
   } catch (err) {
     if (err instanceof AppError) {
       return { error: err.message };
@@ -163,7 +197,6 @@ export async function loginAction(
     return {
       error: "خطایی رخ داد. لطفاً دوباره تلاش کنید.",
     };
-
   }
 
   if (role === "ADMIN") {
@@ -191,17 +224,29 @@ export async function forgotPasswordAction(
     }
 
     const email = parsed.data.email.toLowerCase().trim();
-    const user = getMockUserByEmail(email);
+
+    const result = await db
+      .select({
+        id: users.id,
+        email: users.email,
+      })
+      .from(users)
+      .where(eq(users.email, email))
+      .limit(1);
+
+    const user = result[0];
 
     if (user) {
       const token = generateToken();
       const tokenHash = sha256(token);
+      const expiresAt = new Date(Date.now() + 60 * 60 * 1000);
 
-      addPasswordResetToken(
-        user.id,
+      await db.insert(passwordResetTokens).values({
+        userId: user.id,
         tokenHash,
-        new Date(Date.now() + 60 * 60 * 1000),
-      );
+        expiresAt,
+        usedAt: null,
+      });
 
       const link = `${RESET_BASE}?token=${token}`;
 
@@ -222,12 +267,10 @@ export async function forgotPasswordAction(
     return {
       message: "اگر ایمیلی ثبت شده باشد، لینک بازیابی ارسال خواهد شد.",
     };
-
   } catch (err) {
     console.error("[forgot]", err);
 
     return { error: "خطایی رخ داد." };
-
   }
 }
 
@@ -248,33 +291,67 @@ export async function resetPasswordAction(
     }
 
     const tokenHash = sha256(parsed.data.token);
-    const record = getPasswordResetToken(tokenHash);
+    const now = new Date();
 
-    if (
-      !record ||
-      record.usedAt ||
-      record.expiresAt.getTime() < Date.now()
-    ) {
+    const result = await db
+      .select({
+        id: passwordResetTokens.id,
+        userId: passwordResetTokens.userId,
+        expiresAt: passwordResetTokens.expiresAt,
+        usedAt: passwordResetTokens.usedAt,
+      })
+      .from(passwordResetTokens)
+      .where(
+        and(
+          eq(passwordResetTokens.tokenHash, tokenHash),
+          isNull(passwordResetTokens.usedAt),
+          gt(passwordResetTokens.expiresAt, now),
+        ),
+      )
+      .limit(1);
+
+    const record = result[0];
+
+    if (!record) {
       return {
         error: "لینک بازیابی نامعتبر یا منقضی شده است.",
       };
     }
 
-    const user = getMockUserById(record.userId);
+    const userResult = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(eq(users.id, record.userId))
+      .limit(1);
+
+    const user = userResult[0];
 
     if (!user) {
       return { error: "حساب کاربری یافت نشد." };
     }
 
-    updatePassword(user.id, parsed.data.password);
-    record.usedAt = new Date();
-    shouldRedirect = true;
+    const passwordHash = await hashPassword(parsed.data.password);
 
+    await db
+      .update(users)
+      .set({
+        passwordHash,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
+
+    await db
+      .update(passwordResetTokens)
+      .set({
+        usedAt: new Date(),
+      })
+      .where(eq(passwordResetTokens.id, record.id));
+
+    shouldRedirect = true;
   } catch (err) {
     console.error("[reset]", err);
 
     return { error: "خطایی رخ داد." };
-
   }
 
   if (shouldRedirect) {
@@ -290,24 +367,29 @@ export async function updateProfileAction(
 ): Promise<FormState> {
   try {
     const user = await requireUser();
-
     const name = String(formData.get("name") ?? "").trim();
 
     if (name.length < 2) {
       return { error: "نام نامعتبر است." };
     }
 
-    updateMockUser(user.id, { name });
+    await db
+      .update(users)
+      .set({
+        name,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id));
 
     return { message: "اطلاعات حساب ذخیره شد." };
-
   } catch (err) {
     if (err instanceof AppError) {
       return { error: err.message };
     }
 
-    return { error: "خطایی رخ داد." };
+    console.error("[profile]", err);
 
+    return { error: "خطایی رخ داد." };
   }
 }
 

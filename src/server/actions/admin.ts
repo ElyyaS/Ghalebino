@@ -30,11 +30,11 @@ import {
   technologySchema,
 } from "@/lib/validators";
 import { slugify } from "@/lib/utils";
+import { mockStore, updateMockUser } from "@/server/mock-store";
 
 async function ensureUniqueUsername(base: string): Promise<string> {
   let username = base;
   let i = 2;
-  // eslint-disable-next-line no-constant-condition
   while (true) {
     const [existing] = await db
       .select({ id: sellers.id })
@@ -165,9 +165,46 @@ export async function setUserRoleAction(_prev: FormState, formData: FormData): P
     const admin = await requireAdmin();
     const userId = Number(formData.get("userId"));
     const role = String(formData.get("role"));
-    if (!["ADMIN", "SELLER", "CUSTOMER"].includes(role)) throw new AppError("نقش نامعتبر است.");
-    await db.update(users).set({ role: role as "ADMIN" | "SELLER" | "CUSTOMER" }).where(eq(users.id, userId));
+
+    if (!["ADMIN", "SELLER", "CUSTOMER"].includes(role)) {
+      throw new AppError("نقش نامعتبر است.");
+    }
+
+    if (process.env.NEXT_PUBLIC_DEV_MODE === "true") {
+      const user = mockStore.users.find((candidate) => candidate.id === userId);
+
+      if (!user) {
+        throw new AppError("کاربر یافت نشد.", 404);
+      }
+
+      if (user.id === admin.id && role !== "ADMIN") {
+        throw new AppError("نمی‌توانید نقش حساب مدیر فعلی را حذف کنید.");
+      }
+
+      updateMockUser(userId, {
+        role: role as "ADMIN" | "SELLER" | "CUSTOMER",
+      });
+
+      await audit(admin.id, "USER_ROLE_CHANGED", "user", userId, { role });
+
+      return { message: "نقش کاربر تغییر کرد." };
+    }
+
+    const [updatedUser] = await db
+      .update(users)
+      .set({
+        role: role as "ADMIN" | "SELLER" | "CUSTOMER",
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+
+    if (!updatedUser) {
+      throw new AppError("کاربر یافت نشد.", 404);
+    }
+
     await audit(admin.id, "USER_ROLE_CHANGED", "user", userId, { role });
+
     return { message: "نقش کاربر تغییر کرد." };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
@@ -180,9 +217,46 @@ export async function setUserStatusAction(_prev: FormState, formData: FormData):
     const admin = await requireAdmin();
     const userId = Number(formData.get("userId"));
     const status = String(formData.get("status"));
-    if (!["ACTIVE", "SUSPENDED", "BANNED"].includes(status)) throw new AppError("وضعیت نامعتبر است.");
-    await db.update(users).set({ status: status as "ACTIVE" | "SUSPENDED" | "BANNED" }).where(eq(users.id, userId));
+
+    if (!["ACTIVE", "SUSPENDED", "BANNED"].includes(status)) {
+      throw new AppError("وضعیت نامعتبر است.");
+    }
+
+    if (process.env.NEXT_PUBLIC_DEV_MODE === "true") {
+      const user = mockStore.users.find((candidate) => candidate.id === userId);
+
+      if (!user) {
+        throw new AppError("کاربر یافت نشد.", 404);
+      }
+
+      if (user.id === admin.id && status !== "ACTIVE") {
+        throw new AppError("نمی‌توانید حساب مدیر فعلی را غیرفعال کنید.");
+      }
+
+      updateMockUser(userId, {
+        status: status as "ACTIVE" | "SUSPENDED" | "BANNED",
+      });
+
+      await audit(admin.id, "USER_STATUS_CHANGED", "user", userId, { status });
+
+      return { message: "وضعیت کاربر تغییر کرد." };
+    }
+
+    const [updatedUser] = await db
+      .update(users)
+      .set({
+        status: status as "ACTIVE" | "SUSPENDED" | "BANNED",
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, userId))
+      .returning({ id: users.id });
+
+    if (!updatedUser) {
+      throw new AppError("کاربر یافت نشد.", 404);
+    }
+
     await audit(admin.id, "USER_STATUS_CHANGED", "user", userId, { status });
+
     return { message: "وضعیت کاربر تغییر کرد." };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
@@ -234,7 +308,7 @@ export async function createTechnologyAction(_prev: FormState, formData: FormDat
     return { message: "تکنولوژی ایجاد شد." };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
-    return { error: "خطایی رخ داد." };
+    return { error: "خطایی رخ داد." }
   }
 }
 

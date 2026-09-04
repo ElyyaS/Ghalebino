@@ -1,17 +1,15 @@
 import "server-only";
 
-import { randomBytes } from "node:crypto";
-import { cache } from "react";
+import { createHash, randomBytes } from "node:crypto";
 import { cookies } from "next/headers";
+import { and, eq, gt } from "drizzle-orm";
+
+import { db, sessions, sellers, users } from "@/db";
 import { AppError } from "@/lib/errors";
-import { mockSellers } from "@/server/mock-data";
-import {
-  getMockUserById,
-  mockStore,
-} from "@/server/mock-store";
 
 const SESSION_COOKIE = "ghalebi_session";
 const SESSION_DAYS = 30;
+
 export const CART_COOKIE = "ghalebi_cart";
 
 export type SessionUser = {
@@ -33,16 +31,29 @@ export type SellerAccount = {
 
 export type CartOwner =
   | {
-    userId: number;
-  }
+      userId: number;
+    }
   | {
-    sessionKey: string;
-  };
+      sessionKey: string;
+    };
+
+function hashToken(token: string): string {
+  return createHash("sha256").update(token).digest("hex");
+}
 
 export async function createSession(userId: number): Promise<string> {
   const token = randomBytes(32).toString("base64url");
+  const tokenHash = hashToken(token);
 
-  mockStore.sessions.set(token, userId);
+  const expiresAt = new Date(
+    Date.now() + SESSION_DAYS * 24 * 60 * 60 * 1000,
+  );
+
+  await db.insert(sessions).values({
+    userId,
+    tokenHash,
+    expiresAt,
+  });
 
   return token;
 }
@@ -52,45 +63,57 @@ export async function destroySession(): Promise<void> {
   const token = cookieStore.get(SESSION_COOKIE)?.value;
 
   if (token) {
-    mockStore.sessions.delete(token);
+    await db
+      .delete(sessions)
+      .where(eq(sessions.tokenHash, hashToken(token)));
   }
 
   cookieStore.delete(SESSION_COOKIE);
 }
 
-export const getSessionUser = cache(
-  async (): Promise<SessionUser | null> => {
-    const cookieStore = await cookies();
-    const token = cookieStore.get(SESSION_COOKIE)?.value;
+export async function getSessionUser(): Promise<SessionUser | null> {
+  const cookieStore = await cookies();
+  const token = cookieStore.get(SESSION_COOKIE)?.value;
 
-    if (!token) {
-      return null;
-    }
+  if (!token) {
+    return null;
+  }
 
-    const userId = mockStore.sessions.get(token);
+  const result = await db
+    .select({
+      sessionId: sessions.id,
+      userId: users.id,
+      email: users.email,
+      name: users.name,
+      role: users.role,
+      status: users.status,
+      avatarUrl: users.avatarUrl,
+    })
+    .from(sessions)
+    .innerJoin(users, eq(sessions.userId, users.id))
+    .where(
+      and(
+        eq(sessions.tokenHash, hashToken(token)),
+        gt(sessions.expiresAt, new Date()),
+      ),
+    )
+    .limit(1);
 
-    if (!userId) {
-      return null;
-    }
+  const record = result[0];
 
-    const user = getMockUserById(userId);
+  if (record === undefined) {
+    return null;
+  }
 
-    if (!user) {
-      mockStore.sessions.delete(token);
-      return null;
-    }
-
-    return {
-      id: user.id,
-      email: user.email,
-      name: user.name,
-      role: user.role,
-      status: user.status,
-      avatarUrl: user.avatarUrl,
-    };
-
-  },
-);
+  return {
+    id: record.userId,
+    email: record.email,
+    name: record.name,
+    role: record.role,
+    status: record.status,
+    avatarUrl: record.avatarUrl,
+  };
+}
 
 export async function requireUser(): Promise<SessionUser> {
   const user = await getSessionUser();
@@ -100,6 +123,14 @@ export async function requireUser(): Promise<SessionUser> {
       "برای ادامه لازم است وارد حساب کاربری شوید.",
       401,
       "UNAUTHENTICATED",
+    );
+  }
+
+  if (user.status !== "ACTIVE") {
+    throw new AppError(
+      "حساب کاربری شما فعال نیست.",
+      403,
+      "ACCOUNT_INACTIVE",
     );
   }
 
@@ -131,13 +162,26 @@ export async function requireSeller(): Promise<SellerAccount> {
     );
   }
 
-  const seller = mockSellers.find(
-    (item) =>
-      item.userId === user.id &&
-      item.status === "ACTIVE",
-  );
+  const result = await db
+    .select({
+      id: sellers.id,
+      userId: sellers.userId,
+      username: sellers.username,
+      storeName: sellers.storeName,
+      status: sellers.status,
+    })
+    .from(sellers)
+    .where(
+      and(
+        eq(sellers.userId, user.id),
+        eq(sellers.status, "ACTIVE"),
+      ),
+    )
+    .limit(1);
 
-  if (!seller) {
+  const seller = result[0];
+
+  if (seller === undefined) {
     throw new AppError(
       "حساب فروشنده یافت نشد.",
       404,
@@ -145,33 +189,25 @@ export async function requireSeller(): Promise<SellerAccount> {
     );
   }
 
-  return {
-    id: seller.id,
-    userId: seller.userId,
-    username: seller.username,
-    storeName: seller.storeName,
-    status: seller.status,
-  };
+  return seller;
 }
 
 export async function getSellerByUserId(
   userId: number,
 ): Promise<SellerAccount | null> {
-  const seller = mockSellers.find(
-    (item) => item.userId === userId,
-  );
+  const result = await db
+    .select({
+      id: sellers.id,
+      userId: sellers.userId,
+      username: sellers.username,
+      storeName: sellers.storeName,
+      status: sellers.status,
+    })
+    .from(sellers)
+    .where(eq(sellers.userId, userId))
+    .limit(1);
 
-  if (!seller) {
-    return null;
-  }
-
-  return {
-    id: seller.id,
-    userId: seller.userId,
-    username: seller.username,
-    storeName: seller.storeName,
-    status: seller.status,
-  };
+  return result[0] ?? null;
 }
 
 export async function setSessionCookie(token: string): Promise<void> {
@@ -188,11 +224,12 @@ export async function setSessionCookie(token: string): Promise<void> {
 
 export async function startSession(userId: number): Promise<void> {
   const token = await createSession(userId);
-
   await setSessionCookie(token);
 }
 
-export async function getCartOwner(create = false): Promise<CartOwner> {
+export async function getCartOwner(
+  create = false,
+): Promise<CartOwner> {
   const user = await getSessionUser();
 
   if (user) {

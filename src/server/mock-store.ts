@@ -12,7 +12,7 @@ type MockUser = {
   passwordHash: string;
   name: string;
   role: "ADMIN" | "SELLER" | "CUSTOMER";
-  status: "ACTIVE" | "SUSPENDED" | "PENDING";
+  status: "ACTIVE" | "SUSPENDED" | "PENDING" | "BANNED";
   avatarUrl: string | null;
   bio: string | null;
   emailVerifiedAt: Date | null;
