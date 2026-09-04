@@ -1,0 +1,18 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="800" height="600" viewBox="0 0 800 600">
+  <defs>
+    <linearGradient id="g" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#eef2ff"/>
+      <stop offset="1" stop-color="#ede9fe"/>
+    </linearGradient>
+  </defs>
+  <rect width="800" height="600" fill="url(#g)"/>
+  <g fill="none" stroke="#c7d2fe" stroke-width="2.5">
+    <rect x="120" y="110" width="120" height="120" rx="14"/>
+    <rect x="262" y="122" width="418" height="40" rx="8"/>
+    <rect x="262" y="182" width="300" height="26" rx="8"/>
+    <rect x="120" y="272" width="560" height="180" rx="14"/>
+    <rect x="120" y="478" width="180" height="42" rx="8"/>
+    <rect x="500" y="478" width="180" height="42" rx="8"/>
+  </g>
+  <text x="400" y="310" text-anchor="middle" font-size="34" fill="#a5b4fc" font-family="sans-serif">قالبی نو</text>
+</svg>
