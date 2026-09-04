@@ -27,11 +27,10 @@ export async function Header() {
 
   const owner = await getCartOwner(false);
 
-  const lines = owner.userId
-    ? mockStore.cartItems.filter((item) => item.userId === owner.userId)
-    : owner.sessionKey
-      ? mockStore.cartItems.filter((item) => item.sessionKey === owner.sessionKey)
-      : [];
+  const lines =
+    "userId" in owner
+      ? mockStore.cartItems.filter((item) => item.userId === owner.userId)
+      : mockStore.cartItems.filter((item) => item.sessionKey === owner.sessionKey);
 
   const unread = user
     ? mockStore.notifications.filter(

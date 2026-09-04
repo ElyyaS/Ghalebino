@@ -1,63 +1,62 @@
 import "server-only";
 
 import {
-  getMockActiveSellers,
-  getMockBlogPostBySlug,
-  getMockCategoryBySlug,
-  getMockCollectionBySlug,
-  getMockOrderItems,
-  getMockPageBySlug,
-  getMockProductBySlug,
-  getMockProductFeatures,
-  getMockProductImages,
-  getMockProductLicenses,
-  getMockProductRequirements,
-  getMockProductTechnologies,
-  getMockQuestions,
-  getMockReviews,
-  getMockSellerByUsername,
-  getMockSellerProducts,
-  getMockSellerQuestions,
-  getMockSellerReviews,
-  getMockSellerTransactions,
-  getMockSellerWithdrawals,
-  getMockSupportMessages,
-  getMockSupportTickets,
-  getMockTechnologyBySlug,
-  getMockVisibleCategories,
-  mockBlogPosts,
-  mockCategories,
-  mockCartItems,
-  mockCollectionProducts,
-  mockCollections,
-  mockCoupons,
-  mockLicenses,
-  mockNotifications,
-  mockOrderItems,
-  mockOrders,
-  mockProductLicenses,
-  mockProducts,
-  mockReports,
-  mockReviewCriteria,
-  mockReviews,
-  mockSellers,
-  mockSettings,
-  mockSupportTickets,
-  mockTechnologies,
-  mockTransactions,
-  mockWithdrawals,
-  mockWishlist,
-  mockComparisons,
-  mockData,
-} from "./mock-db";
+  and,
+  asc,
+  count,
+  desc,
+  eq,
+  gte,
+  gt,
+  ilike,
+  inArray,
+  isNotNull,
+  isNull,
+  lte,
+  or,
+  sql,
+} from "drizzle-orm";
 
 import {
-  getMockOrderRows,
-  getMockProductDetail,
-  getMockProductListItem,
-  mockUsers,
-  sortMockProducts,
-} from "./mock-data";
+  blogPosts,
+  blogPostTags,
+  blogTags,
+  categories,
+  cartItems,
+  collectionProducts,
+  collections,
+  comparisons,
+  coupons,
+  downloads,
+  licenses,
+  notifications,
+  orderItems,
+  orders,
+  pages,
+  productFeatures,
+  productImages,
+  productLicenses,
+  productRequirements,
+  productTechnologies,
+  productVersions,
+  products,
+  questions,
+  reports,
+  reviewCriteria,
+  reviews,
+  sellers,
+  sellerApplications,
+  settings,
+  supportMessages,
+  supportTickets,
+  technologies,
+  transactions,
+  users,
+  wishlist,
+  withdrawals,
+} from "@/db";
+
+import { db } from "@/db";
 
 import type {
   CartLine,
@@ -79,6 +78,7 @@ export type ProductStatus =
   | "APPROVED"
   | "PUBLISHED"
   | "REJECTED"
+  | "SUSPENDED"
   | "ARCHIVED";
 
 const PAID_STATUSES = ["PAID", "COMPLETED"] as const;
@@ -87,19 +87,8 @@ type WishlistProduct = ProductListItem & {
   productId: number;
 };
 
-type AdminOrderRow = (typeof mockOrders)[number] & {
-  customerName: string;
-  productTitle: string;
-  finalPrice: number;
-  sellerShare: number;
-  sellerName: string;
-  licenseName: string;
-  itemId: number;
-  items: ReturnType<typeof getMockOrderItems>;
-};
-
 function effectivePrice(
-  product: (typeof mockProducts)[number],
+  product: Pick<typeof products.$inferSelect, "price" | "salePrice">,
 ) {
   return product.salePrice ?? product.price;
 }
@@ -109,182 +98,208 @@ function licensePrice(
   multiplier: number,
   override: number | null,
 ) {
-  return (
-    override ??
-    Math.round(basePrice * multiplier)
-  );
+  return override ?? Math.round(basePrice * multiplier);
 }
 
-function getUserName(
-  userId: number | null | undefined,
+function productStatusFilter(
+  status: ProductStatus | ProductStatus[] | undefined,
 ) {
-  if (userId == null) {
-    return "کاربر";
+  if (status === undefined) {
+    return eq(products.status, "PUBLISHED");
   }
 
-  return (
-    mockUsers.find(
-      (user) => user.id === userId,
-    )?.name ?? "کاربر"
+  const statuses = Array.isArray(status) ? status : [status];
+
+  return statuses.length === 1
+    ? eq(products.status, statuses[0])
+    : inArray(products.status, statuses);
+}
+
+function productSearchFilter(q?: string) {
+  if (!q?.trim()) {
+    return undefined;
+  }
+
+  const value = `%${q.trim()}%`;
+
+  return or(
+    ilike(products.title, value),
+    ilike(products.slug, value),
+    ilike(products.shortDescription, value),
+    ilike(products.description, value),
+    ilike(products.seoTitle, value),
+    ilike(products.seoDescription, value),
   );
 }
 
-function getSeller(sellerId: number) {
-  return (
-    mockSellers.find(
-      (seller) => seller.id === sellerId,
-    ) ?? null
-  );
+function productSort(sort: SortOption) {
+  switch (sort) {
+    case "newest":
+      return desc(products.createdAt);
+    case "best_sellers":
+      return desc(products.salesCount);
+    case "highest_rated":
+      return desc(products.ratingAvg);
+    case "trending":
+      return desc(products.views);
+    case "recently_updated":
+      return desc(products.lastUpdatedAt);
+    case "price_asc":
+      return asc(sql`coalesce(${products.salePrice}, ${products.price})`);
+    case "price_desc":
+      return desc(sql`coalesce(${products.salePrice}, ${products.price})`);
+    case "relevance":
+    default:
+      return desc(products.salesCount);
+  }
 }
 
-function getProduct(productId: number) {
-  return (
-    mockProducts.find(
-      (product) => product.id === productId,
-    ) ?? null
-  );
-}
-
-function productMatches(
-  product: (typeof mockProducts)[number],
-  params: ListProductsParams,
-) {
-  if (product.deletedAt !== null) {
-    return false;
-  }
-
-  if (
-    params.status === undefined &&
-    product.status !== "PUBLISHED"
-  ) {
-    return false;
-  }
-
-  if (params.status !== undefined) {
-    const statuses = Array.isArray(params.status)
-      ? params.status
-      : [params.status];
-
-    if (
-      !statuses.includes(
-        product.status as ProductStatus,
-      )
-    ) {
-      return false;
-    }
-  }
-
-  if (params.q) {
-    const q = params.q.trim().toLowerCase();
-
-    const haystack = [
-      product.title,
-      product.slug,
-      product.shortDescription,
-      product.description,
-      product.seoTitle ?? "",
-      product.seoDescription ?? "",
-    ]
-      .join(" ")
-      .toLowerCase();
-
-    if (!haystack.includes(q)) {
-      return false;
-    }
-  }
-
-  if (
-    params.categoryId !== undefined &&
-    product.categoryId !== params.categoryId
-  ) {
-    return false;
-  }
-
-  if (params.technologyId !== undefined) {
-    const hasTechnology =
-      mockData.productTechnologies.some(
-        (item) =>
-          item.productId === product.id &&
-          item.technologyId === params.technologyId,
-      );
-
-    if (!hasTechnology) {
-      return false;
-    }
-  }
-
-  if (
-    params.sellerId !== undefined &&
-    product.sellerId !== params.sellerId
-  ) {
-    return false;
-  }
-
-  if (
-    params.minPrice !== undefined &&
-    effectivePrice(product) < params.minPrice
-  ) {
-    return false;
-  }
-
-  if (
-    params.maxPrice !== undefined &&
-    effectivePrice(product) > params.maxPrice
-  ) {
-    return false;
-  }
-
-  if (
-    params.minRating !== undefined &&
-    product.ratingAvg < params.minRating
-  ) {
-    return false;
-  }
-
-  if (
-    params.onSale &&
-    product.salePrice === null
-  ) {
-    return false;
-  }
-
-  if (
-    params.isFeatured !== undefined &&
-    product.isFeatured !== params.isFeatured
-  ) {
-    return false;
-  }
-
-  if (
-    params.isTrending !== undefined &&
-    product.isTrending !== params.isTrending
-  ) {
-    return false;
-  }
-
-  if (
-    params.isStaffPick !== undefined &&
-    product.isStaffPick !== params.isStaffPick
-  ) {
-    return false;
-  }
-
-  return true;
-}
-
-function toProductListItems(
-  products: typeof mockProducts,
-): ProductListItem[] {
-  return products
-    .map((product) =>
-      getMockProductListItem(product.id),
+async function getProductListItemById(
+  productId: number,
+): Promise<ProductListItem | null> {
+  const rows = await db
+    .select({
+      id: products.id,
+      slug: products.slug,
+      title: products.title,
+      shortDescription: products.shortDescription,
+      price: products.price,
+      salePrice: products.salePrice,
+      ratingAvg: products.ratingAvg,
+      ratingCount: products.ratingCount,
+      salesCount: products.salesCount,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      status: products.status,
+      demoUrl: products.demoUrl,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+      sellerRating: sellers.rating,
+      categoryId: categories.id,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+    })
+    .from(products)
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(categories, eq(products.categoryId, categories.id))
+    .where(
+      and(
+        eq(products.id, productId),
+        isNull(products.deletedAt),
+      ),
     )
-    .filter(
-      (
-        item,
-      ): item is ProductListItem =>
-        item !== null,
+    .limit(1);
+
+  const product = rows[0];
+
+  if (!product) {
+    return null;
+  }
+
+  const imageRows = await db
+    .select({
+      url: productImages.url,
+    })
+    .from(productImages)
+    .where(
+      and(
+        eq(productImages.productId, productId),
+        eq(productImages.isPrimary, true),
+      ),
+    )
+    .orderBy(asc(productImages.sortOrder))
+    .limit(1);
+
+  return {
+    ...product,
+    imageUrl: imageRows[0]?.url ?? null,
+  };
+}
+
+async function getProductListItemsByIds(
+  ids: number[],
+): Promise<ProductListItem[]> {
+  if (ids.length === 0) {
+    return [];
+  }
+
+  const rows = await db
+    .select({
+      id: products.id,
+      slug: products.slug,
+      title: products.title,
+      shortDescription: products.shortDescription,
+      price: products.price,
+      salePrice: products.salePrice,
+      ratingAvg: products.ratingAvg,
+      ratingCount: products.ratingCount,
+      salesCount: products.salesCount,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      status: products.status,
+      demoUrl: products.demoUrl,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+      sellerRating: sellers.rating,
+      categoryId: categories.id,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+    })
+    .from(products)
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(categories, eq(products.categoryId, categories.id))
+    .where(
+      and(
+        inArray(products.id, ids),
+        isNull(products.deletedAt),
+      ),
     );
+
+  const imageRows = await db
+    .select({
+      productId: productImages.productId,
+      url: productImages.url,
+    })
+    .from(productImages)
+    .where(
+      and(
+        inArray(productImages.productId, ids),
+        eq(productImages.isPrimary, true),
+      ),
+    )
+    .orderBy(asc(productImages.sortOrder));
+
+  const imageMap = new Map<number, string>();
+
+  for (const image of imageRows) {
+    if (!imageMap.has(image.productId)) {
+      imageMap.set(image.productId, image.url);
+    }
+  }
+
+  const rowMap = new Map<number, ProductListItem>();
+
+  for (const row of rows) {
+    rowMap.set(row.id, {
+      ...row,
+      imageUrl: imageMap.get(row.id) ?? null,
+      status: String(row.status),
+    });
+  }
+
+  const result: ProductListItem[] = [];
+
+  for (const id of ids) {
+    const item = rowMap.get(id);
+
+    if (item) {
+      result.push(item);
+    }
+  }
+
+  return result;
 }
 
 export type ListProductsParams = {
@@ -308,82 +323,351 @@ export type ListProductsParams = {
 export async function listProducts(
   params: ListProductsParams = {},
 ) {
-  const page = Math.max(
-    1,
-    params.page ?? 1,
-  );
+  const page = Math.max(1, params.page ?? 1);
+  const perPage = Math.max(1, params.perPage ?? 12);
 
-  const perPage = Math.max(
-    1,
-    params.perPage ?? 12,
-  );
+  const filters = [
+    isNull(products.deletedAt),
+    productStatusFilter(params.status),
+    productSearchFilter(params.q),
+  ];
 
-  const products =
-    mockProducts.filter((product) =>
-      productMatches(product, params),
+  if (params.categoryId !== undefined) {
+    filters.push(eq(products.categoryId, params.categoryId));
+  }
+
+  if (params.sellerId !== undefined) {
+    filters.push(eq(products.sellerId, params.sellerId));
+  }
+
+  if (params.minPrice !== undefined) {
+    filters.push(
+      gte(
+        sql`coalesce(${products.salePrice}, ${products.price})`,
+        params.minPrice,
+      ),
     );
+  }
 
-  let items =
-    toProductListItems(products);
+  if (params.maxPrice !== undefined) {
+    filters.push(
+      lte(
+        sql`coalesce(${products.salePrice}, ${products.price})`,
+        params.maxPrice,
+      ),
+    );
+  }
 
-  items = sortMockProducts(
-    items,
-    params.sort ?? "relevance",
-  );
+  if (params.minRating !== undefined) {
+    filters.push(gte(products.ratingAvg, params.minRating));
+  }
 
-  const total = items.length;
-  const start = (page - 1) * perPage;
+  if (params.onSale) {
+    filters.push(isNotNull(products.salePrice));
+  }
+
+  if (params.isFeatured !== undefined) {
+    filters.push(eq(products.isFeatured, params.isFeatured));
+  }
+
+  if (params.isTrending !== undefined) {
+    filters.push(eq(products.isTrending, params.isTrending));
+  }
+
+  if (params.isStaffPick !== undefined) {
+    filters.push(eq(products.isStaffPick, params.isStaffPick));
+  }
+
+  if (params.technologyId !== undefined) {
+    const technologyProducts = db
+      .select({
+        productId: productTechnologies.productId,
+      })
+      .from(productTechnologies)
+      .where(
+        eq(
+          productTechnologies.technologyId,
+          params.technologyId,
+        ),
+      );
+
+    filters.push(inArray(products.id, technologyProducts));
+  }
+
+  const whereClause = and(...filters);
+
+  const countRows = await db
+    .select({
+      count: count(),
+    })
+    .from(products)
+    .where(whereClause);
+
+  const total = Number(countRows[0]?.count ?? 0);
+  const offset = (page - 1) * perPage;
+
+  const rows = await db
+    .select({
+      id: products.id,
+      slug: products.slug,
+      title: products.title,
+      shortDescription: products.shortDescription,
+      price: products.price,
+      salePrice: products.salePrice,
+      ratingAvg: products.ratingAvg,
+      ratingCount: products.ratingCount,
+      salesCount: products.salesCount,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      status: products.status,
+      demoUrl: products.demoUrl,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+      sellerRating: sellers.rating,
+      categoryId: categories.id,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+    })
+    .from(products)
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(categories, eq(products.categoryId, categories.id))
+    .where(whereClause)
+    .orderBy(productSort(params.sort ?? "relevance"))
+    .limit(perPage)
+    .offset(offset);
+
+  const ids = rows.map((row) => row.id);
+
+  const imageRows =
+    ids.length > 0
+      ? await db
+          .select({
+            productId: productImages.productId,
+            url: productImages.url,
+          })
+          .from(productImages)
+          .where(
+            and(
+              inArray(productImages.productId, ids),
+              eq(productImages.isPrimary, true),
+            ),
+          )
+          .orderBy(asc(productImages.sortOrder))
+      : [];
+
+  const imageMap = new Map<number, string>();
+
+  for (const image of imageRows) {
+    if (!imageMap.has(image.productId)) {
+      imageMap.set(image.productId, image.url);
+    }
+  }
+
+  const items: ProductListItem[] = rows.map((row) => ({
+    ...row,
+    imageUrl: imageMap.get(row.id) ?? null,
+    status: String(row.status),
+  }));
 
   return {
-    items: items.slice(
-      start,
-      start + perPage,
-    ),
+    items,
     total,
     page,
     perPage,
-    totalPages: Math.max(
-      1,
-      Math.ceil(total / perPage),
-    ),
+    totalPages: Math.max(1, Math.ceil(total / perPage)),
   };
 }
 
 export async function recordProductView(
   productId: number,
 ) {
-  const product = getProduct(productId);
+  const result = await db
+    .update(products)
+    .set({
+      views: sql`${products.views} + 1`,
+    })
+    .where(
+      and(
+        eq(products.id, productId),
+        isNull(products.deletedAt),
+      ),
+    )
+    .returning({ id: products.id });
 
-  if (product) {
-    product.views += 1;
-  }
-
-  return true;
+  return result.length > 0;
 }
 
 export async function getProductBySlug(
   slug: string,
-): Promise<
-  (ProductDetail & {
-    createdAt: Date;
-  }) | null
-> {
-  const product =
-    getMockProductBySlug(slug);
+): Promise<(ProductDetail & { createdAt: Date }) | null> {
+  const rows = await db
+    .select({
+      id: products.id,
+      slug: products.slug,
+      title: products.title,
+      shortDescription: products.shortDescription,
+      price: products.price,
+      salePrice: products.salePrice,
+      ratingAvg: products.ratingAvg,
+      ratingCount: products.ratingCount,
+      salesCount: products.salesCount,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      status: products.status,
+      demoUrl: products.demoUrl,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+      sellerRating: sellers.rating,
+      sellerBio: sellers.bio,
+      sellerTagline: sellers.tagline,
+      sellerAvatarUrl: sellers.avatarUrl,
+      sellerSalesCount: sellers.totalSales,
+      categoryId: categories.id,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+      description: products.description,
+      seoTitle: products.seoTitle,
+      seoDescription: products.seoDescription,
+      documentationUrl: products.documentationUrl,
+      supportNote: products.supportNote,
+      createdAt: products.createdAt,
+    })
+    .from(products)
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(categories, eq(products.categoryId, categories.id))
+    .where(
+      and(
+        eq(products.slug, slug),
+        eq(products.status, "PUBLISHED"),
+        isNull(products.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  const product = rows[0];
 
   if (!product) {
     return null;
   }
 
-  const detail =
-    getMockProductDetail(product.id);
+  const [
+    imageRows,
+    featureRows,
+    requirementRows,
+    technologyRows,
+    licenseRows,
+  ] = await Promise.all([
+    db
+      .select({
+        url: productImages.url,
+        alt: productImages.alt,
+      })
+      .from(productImages)
+      .where(eq(productImages.productId, product.id))
+      .orderBy(asc(productImages.sortOrder)),
+    db
+      .select({
+        text: productFeatures.text,
+      })
+      .from(productFeatures)
+      .where(eq(productFeatures.productId, product.id))
+      .orderBy(asc(productFeatures.sortOrder)),
+    db
+      .select({
+        text: productRequirements.text,
+      })
+      .from(productRequirements)
+      .where(eq(productRequirements.productId, product.id))
+      .orderBy(asc(productRequirements.sortOrder)),
+    db
+      .select({
+        id: technologies.id,
+        name: technologies.name,
+        slug: technologies.slug,
+        kind: technologies.kind,
+      })
+      .from(productTechnologies)
+      .innerJoin(
+        technologies,
+        eq(productTechnologies.technologyId, technologies.id),
+      )
+      .where(eq(productTechnologies.productId, product.id))
+      .orderBy(asc(technologies.sortOrder)),
+    db
+      .select({
+        id: productLicenses.id,
+        licenseId: licenses.id,
+        licenseName: licenses.name,
+        licenseKey: licenses.key,
+        licenseDescription: licenses.description,
+        licenseTerms: licenses.terms,
+        multiplier: licenses.multiplier,
+        override: productLicenses.price,
+      })
+      .from(productLicenses)
+      .innerJoin(
+        licenses,
+        eq(productLicenses.licenseId, licenses.id),
+      )
+      .where(
+        and(
+          eq(productLicenses.productId, product.id),
+          eq(productLicenses.isAvailable, true),
+        ),
+      )
+      .orderBy(asc(licenses.sortOrder)),
+  ]);
 
-  if (!detail) {
-    return null;
-  }
+  const basePrice = effectivePrice(product);
 
   return {
-    ...detail,
+    id: product.id,
+    slug: product.slug,
+    title: product.title,
+    shortDescription: product.shortDescription,
+    price: product.price,
+    salePrice: product.salePrice,
+    ratingAvg: product.ratingAvg,
+    ratingCount: product.ratingCount,
+    salesCount: product.salesCount,
+    currentVersion: product.currentVersion,
+    lastUpdatedAt: product.lastUpdatedAt,
+    status: product.status,
+    imageUrl: imageRows[0]?.url ?? null,
+    demoUrl: product.demoUrl,
+    sellerId: product.sellerId,
+    sellerName: product.sellerName,
+    sellerUsername: product.sellerUsername,
+    sellerRating: product.sellerRating,
+    categoryId: product.categoryId,
+    categoryName: product.categoryName,
+    categorySlug: product.categorySlug,
+    description: product.description,
+    seoTitle: product.seoTitle,
+    seoDescription: product.seoDescription,
+    documentationUrl: product.documentationUrl,
+    supportNote: product.supportNote,
+    features: featureRows.map((item) => item.text),
+    requirements: requirementRows.map((item) => item.text),
+    images: imageRows,
+    technologies: technologyRows,
+    licenses: licenseRows.map((item) => ({
+      id: item.id,
+      licenseId: item.licenseId,
+      licenseName: item.licenseName,
+      licenseKey: item.licenseKey,
+      price: licensePrice(
+        basePrice,
+        item.multiplier,
+        item.override,
+      ),
+    })),
+    sellerBio: product.sellerBio,
+    sellerTagline: product.sellerTagline,
+    sellerAvatarUrl: product.sellerAvatarUrl,
+    sellerSalesCount: product.sellerSalesCount,
     createdAt: product.createdAt,
   };
 }
@@ -392,133 +676,174 @@ export async function getProductLicense(
   productId: number,
   licenseId: number,
 ) {
-  const row =
-    mockProductLicenses.find(
-      (item) =>
-        item.productId === productId &&
-        item.licenseId === licenseId &&
-        item.isAvailable,
-    );
+  const rows = await db
+    .select({
+      id: productLicenses.id,
+      licenseId: licenses.id,
+      name: licenses.name,
+      key: licenses.key,
+      multiplier: licenses.multiplier,
+      override: productLicenses.price,
+      productPrice: products.price,
+      salePrice: products.salePrice,
+    })
+    .from(productLicenses)
+    .innerJoin(
+      licenses,
+      eq(productLicenses.licenseId, licenses.id),
+    )
+    .innerJoin(
+      products,
+      eq(productLicenses.productId, products.id),
+    )
+    .where(
+      and(
+        eq(productLicenses.productId, productId),
+        eq(productLicenses.licenseId, licenseId),
+        eq(productLicenses.isAvailable, true),
+        isNull(products.deletedAt),
+      ),
+    )
+    .limit(1);
+
+  const row = rows[0];
 
   if (!row) {
     return null;
   }
 
-  const license =
-    mockLicenses.find(
-      (item) => item.id === row.licenseId,
-    );
-
-  const product =
-    getProduct(productId);
-
-  if (!license || !product) {
-    return null;
-  }
-
   return {
     id: row.id,
-    licenseId: license.id,
-    name: license.name,
-    key: license.key,
-    multiplier: license.multiplier,
-    override: row.price,
+    licenseId: row.licenseId,
+    name: row.name,
+    key: row.key,
+    multiplier: row.multiplier,
+    override: row.override,
     price: licensePrice(
-      effectivePrice(product),
-      license.multiplier,
-      row.price,
+      row.salePrice ?? row.productPrice,
+      row.multiplier,
+      row.override,
     ),
   };
 }
 
 export async function getCategories() {
-  return getMockVisibleCategories();
+  return db
+    .select()
+    .from(categories)
+    .where(eq(categories.isVisible, true))
+    .orderBy(asc(categories.sortOrder), asc(categories.name));
 }
 
 export async function getCategoryBySlug(
   slug: string,
 ) {
-  return getMockCategoryBySlug(slug);
+  const rows = await db
+    .select()
+    .from(categories)
+    .where(
+      and(
+        eq(categories.slug, slug),
+        eq(categories.isVisible, true),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 export async function getTechnologies() {
-  return [...mockTechnologies]
-    .filter(
-      (technology) =>
-        technology.isVisible,
-    )
-    .sort(
-      (a, b) =>
-        a.sortOrder -
-        b.sortOrder,
-    );
+  return db
+    .select()
+    .from(technologies)
+    .where(eq(technologies.isVisible, true))
+    .orderBy(asc(technologies.sortOrder), asc(technologies.name));
 }
 
 export async function getTechnologyBySlug(
   slug: string,
 ) {
-  return getMockTechnologyBySlug(slug);
+  const rows = await db
+    .select()
+    .from(technologies)
+    .where(
+      and(
+        eq(technologies.slug, slug),
+        eq(technologies.isVisible, true),
+      ),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 export async function getAllCategories() {
-  return [...mockCategories].sort(
-    (a, b) =>
-      a.sortOrder -
-      b.sortOrder,
-  );
+  return db
+    .select()
+    .from(categories)
+    .orderBy(asc(categories.sortOrder), asc(categories.name));
 }
 
 export async function getAllTechnologies() {
-  return [...mockTechnologies].sort(
-    (a, b) =>
-      a.sortOrder -
-      b.sortOrder,
-  );
+  return db
+    .select()
+    .from(technologies)
+    .orderBy(asc(technologies.sortOrder), asc(technologies.name));
 }
 
 export async function getSellerByUsername(
   username: string,
 ): Promise<SellerPublic | null> {
-  const seller =
-    getMockSellerByUsername(username);
+  const rows = await db
+    .select({
+      id: sellers.id,
+      username: sellers.username,
+      storeName: sellers.storeName,
+      tagline: sellers.tagline,
+      bio: sellers.bio,
+      avatarUrl: sellers.avatarUrl,
+      coverUrl: sellers.coverUrl,
+      rating: sellers.rating,
+      ratingCount: sellers.ratingCount,
+      totalSales: sellers.totalSales,
+      totalProducts: sellers.totalProducts,
+      responseTime: sellers.responseTime,
+      joinedAt: sellers.createdAt,
+    })
+    .from(sellers)
+    .where(
+      and(
+        eq(sellers.username, username),
+        eq(sellers.status, "ACTIVE"),
+      ),
+    )
+    .limit(1);
 
-  if (
-    !seller ||
-    seller.status !== "ACTIVE"
-  ) {
-    return null;
-  }
-
-  return {
-    id: seller.id,
-    username: seller.username,
-    storeName: seller.storeName,
-    tagline: seller.tagline,
-    bio: seller.bio,
-    avatarUrl: seller.avatarUrl,
-    coverUrl: seller.coverUrl,
-    rating: seller.rating,
-    ratingCount: seller.ratingCount,
-    totalSales: seller.totalSales,
-    totalProducts: seller.totalProducts,
-    responseTime: seller.responseTime,
-    joinedAt: seller.createdAt,
-  };
+  return rows[0] ?? null;
 }
 
 export async function getFeaturedSellers(
   limit = 6,
 ) {
-  return getMockActiveSellers()
-    .filter(
-      (seller) =>
-        seller.totalProducts > 0,
+  return db
+    .select()
+    .from(sellers)
+    .where(
+      and(
+        eq(sellers.status, "ACTIVE"),
+        gt(sellers.totalProducts, 0),
+      ),
     )
-    .slice(0, limit);
+    .orderBy(desc(sellers.rating), desc(sellers.totalSales))
+    .limit(limit);
 }
 
 export async function getAllSellers() {
-  return getMockActiveSellers();
+  return db
+    .select()
+    .from(sellers)
+    .where(eq(sellers.status, "ACTIVE"))
+    .orderBy(desc(sellers.rating), desc(sellers.totalSales));
 }
 
 export async function getCartLines(
@@ -527,209 +852,255 @@ export async function getCartLines(
     | { userId: number }
     | { sessionKey: string },
 ): Promise<CartLine[]> {
-  const items =
-    mockCartItems.filter((item) => {
-      if (typeof owner === "number") {
-        return item.userId === owner;
-      }
+  const ownerFilter =
+    typeof owner === "number"
+      ? eq(cartItems.userId, owner)
+      : "userId" in owner
+        ? eq(cartItems.userId, owner.userId)
+        : eq(cartItems.sessionKey, owner.sessionKey);
 
-      if ("userId" in owner) {
-        return item.userId === owner.userId;
-      }
-
-      return item.sessionKey === owner.sessionKey;
-    });
-
-  return items
-    .map((item) => {
-      const product =
-        getProduct(item.productId);
-
-      const seller = product
-        ? getSeller(product.sellerId)
-        : null;
-
-      const image =
-        getMockProductImages(
-          item.productId,
-        ).find(
-          (img) => img.isPrimary,
-        );
-
-      const license =
-        mockProductLicenses.find(
-          (licenseItem) =>
-            licenseItem.productId ===
-              item.productId &&
-            licenseItem.licenseId ===
-              item.licenseId,
-        );
-
-      const licenseInfo = license
-        ? mockLicenses.find(
-            (licenseItem) =>
-              licenseItem.id ===
-              license.licenseId,
-          )
-        : null;
-
-      if (
-        !product ||
-        !seller ||
-        !license ||
-        !licenseInfo
-      ) {
-        return null;
-      }
-
-      return {
-        id: item.id,
-        productId: product.id,
-        productSlug: product.slug,
-        productTitle: product.title,
-        imageUrl: image?.url ?? null,
-        sellerId: seller.id,
-        sellerName: seller.storeName,
-        licenseId: licenseInfo.id,
-        licenseName: licenseInfo.name,
-        unitPrice: licensePrice(
-          effectivePrice(product),
-          licenseInfo.multiplier,
-          license.price,
-        ),
-      };
+  const rows = await db
+    .select({
+      id: cartItems.id,
+      productId: products.id,
+      productSlug: products.slug,
+      productTitle: products.title,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      licenseId: licenses.id,
+      licenseName: licenses.name,
+      licenseMultiplier: licenses.multiplier,
+      licenseOverride: productLicenses.price,
+      productPrice: products.price,
+      salePrice: products.salePrice,
     })
-    .filter(
-      (item): item is CartLine =>
-        item !== null,
-    );
+    .from(cartItems)
+    .innerJoin(products, eq(cartItems.productId, products.id))
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(
+      licenses,
+      eq(cartItems.licenseId, licenses.id),
+    )
+    .leftJoin(
+      productLicenses,
+      and(
+        eq(productLicenses.productId, cartItems.productId),
+        eq(productLicenses.licenseId, cartItems.licenseId),
+      ),
+    )
+    .where(
+      and(
+        ownerFilter,
+        isNull(products.deletedAt),
+      ),
+    )
+    .orderBy(desc(cartItems.createdAt));
+
+  const ids = rows.map((row) => row.productId);
+
+  const imageRows =
+    ids.length > 0
+      ? await db
+          .select({
+            productId: productImages.productId,
+            url: productImages.url,
+          })
+          .from(productImages)
+          .where(
+            and(
+              inArray(productImages.productId, ids),
+              eq(productImages.isPrimary, true),
+            ),
+          )
+      : [];
+
+  const imageMap = new Map<number, string>();
+
+  for (const image of imageRows) {
+    if (!imageMap.has(image.productId)) {
+      imageMap.set(image.productId, image.url);
+    }
+  }
+
+  return rows.map((row) => ({
+    id: row.id,
+    productId: row.productId,
+    productSlug: row.productSlug,
+    productTitle: row.productTitle,
+    imageUrl: imageMap.get(row.productId) ?? null,
+    sellerId: row.sellerId,
+    sellerName: row.sellerName,
+    licenseId: row.licenseId,
+    licenseName: row.licenseName,
+    unitPrice: licensePrice(
+      row.salePrice ?? row.productPrice,
+      row.licenseMultiplier,
+      row.licenseOverride,
+    ),
+  }));
 }
 
 export async function getWishlistProducts(
   userId: number,
 ): Promise<WishlistProduct[]> {
-  const wishlist =
-    mockWishlist.filter(
-      (item) => item.userId === userId,
-    );
+  const rows = await db
+    .select({
+      productId: wishlist.productId,
+    })
+    .from(wishlist)
+    .where(eq(wishlist.userId, userId))
+    .orderBy(desc(wishlist.createdAt));
 
-  const products: WishlistProduct[] = [];
+  const ids = rows.map((row) => row.productId);
+  const productsRows = await getProductListItemsByIds(ids);
 
-  for (const wishlistItem of wishlist) {
-    const product =
-      getMockProductListItem(
-        wishlistItem.productId,
-      );
-
-    if (!product) {
-      continue;
-    }
-
-    products.push({
-      ...product,
-      productId: wishlistItem.productId,
-    });
-  }
-
-  return products;
+  return productsRows.map((product) => ({
+    ...product,
+    productId: product.id,
+  }));
 }
 
 export async function getWishlistIds(
   userId: number,
 ) {
-  return mockWishlist
-    .filter(
-      (item) => item.userId === userId,
-    )
-    .map(
-      (item) => item.productId,
-    );
+  const rows = await db
+    .select({
+      productId: wishlist.productId,
+    })
+    .from(wishlist)
+    .where(eq(wishlist.userId, userId));
+
+  return rows.map((row) => row.productId);
 }
 
 export async function getComparisonProducts(
   userId: number,
 ) {
-  const ids =
-    mockComparisons
-      .filter(
-        (item) => item.userId === userId,
-      )
-      .map(
-        (item) => item.productId,
-      );
+  const rows = await db
+    .select({
+      productId: comparisons.productId,
+    })
+    .from(comparisons)
+    .where(eq(comparisons.userId, userId))
+    .orderBy(desc(comparisons.createdAt));
 
-  return toProductListItems(
-    mockProducts.filter(
-      (product) =>
-        ids.includes(product.id),
-    ),
+  return getProductListItemsByIds(
+    rows.map((row) => row.productId),
   );
 }
 
 export async function getOrders(
   userId: number,
 ): Promise<OrderRow[]> {
-  return getMockOrderRows(userId);
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      status: orders.status,
+      subtotal: orders.subtotal,
+      discount: orders.discount,
+      total: orders.total,
+      createdAt: orders.createdAt,
+      itemsCount: count(orderItems.id),
+    })
+    .from(orders)
+    .leftJoin(
+      orderItems,
+      eq(orderItems.orderId, orders.id),
+    )
+    .where(eq(orders.userId, userId))
+    .groupBy(
+      orders.id,
+      orders.orderNumber,
+      orders.status,
+      orders.subtotal,
+      orders.discount,
+      orders.total,
+      orders.createdAt,
+    )
+    .orderBy(desc(orders.createdAt));
+
+  return rows.map((row) => ({
+    ...row,
+    itemsCount: Number(row.itemsCount),
+  }));
 }
 
 export async function getOrderDetail(
   orderId: number,
   userId: number,
 ) {
-  const order =
-    mockOrders.find(
-      (item) =>
-        item.id === orderId &&
-        item.userId === userId,
-    );
+  const orderRows = await db
+    .select()
+    .from(orders)
+    .where(
+      and(
+        eq(orders.id, orderId),
+        eq(orders.userId, userId),
+      ),
+    )
+    .limit(1);
+
+  const order = orderRows[0];
 
   if (!order) {
     return null;
   }
 
-  const items =
-    mockOrderItems
-      .filter(
-        (item) =>
-          item.orderId === orderId,
-      )
-      .map((item) => {
-        const product =
-          getProduct(item.productId);
+  const itemRows = await db
+    .select({
+      id: orderItems.id,
+      productId: orderItems.productId,
+      productSlug: products.slug,
+      productTitle: orderItems.productTitle,
+      licenseName: orderItems.licenseName,
+      unitPrice: orderItems.unitPrice,
+      discount: orderItems.discount,
+      finalPrice: orderItems.finalPrice,
+      sellerName: sellers.storeName,
+    })
+    .from(orderItems)
+    .innerJoin(
+      products,
+      eq(orderItems.productId, products.id),
+    )
+    .innerJoin(
+      sellers,
+      eq(orderItems.sellerId, sellers.id),
+    )
+    .where(eq(orderItems.orderId, orderId))
+    .orderBy(asc(orderItems.id));
 
-        const image =
-          product
-            ? getMockProductImages(
-                product.id,
-              ).find(
-                (img) =>
-                  img.isPrimary,
-              )
-            : null;
+  const productIds = itemRows.map((item) => item.productId);
 
-        return {
-          id: item.id,
-          productId: item.productId,
-          productSlug:
-            product?.slug ?? "",
-          productTitle:
-            item.productTitle,
-          imageUrl:
-            image?.url ?? null,
-          licenseName:
-            item.licenseName,
-          unitPrice:
-            item.unitPrice,
-          discount:
-            item.discount,
-          finalPrice:
-            item.finalPrice,
-          sellerName:
-            getSeller(
-              item.sellerId,
-            )?.storeName ?? "",
-        } satisfies OrderItemRow;
-      });
+  const imageRows =
+    productIds.length > 0
+      ? await db
+          .select({
+            productId: productImages.productId,
+            url: productImages.url,
+          })
+          .from(productImages)
+          .where(
+            and(
+              inArray(productImages.productId, productIds),
+              eq(productImages.isPrimary, true),
+            ),
+          )
+      : [];
+
+  const imageMap = new Map<number, string>();
+
+  for (const image of imageRows) {
+    if (!imageMap.has(image.productId)) {
+      imageMap.set(image.productId, image.url);
+    }
+  }
+
+  const items: OrderItemRow[] = itemRows.map((item) => ({
+    ...item,
+    imageUrl: imageMap.get(item.productId) ?? null,
+  }));
 
   return {
     ...order,
@@ -740,151 +1111,159 @@ export async function getOrderDetail(
 export async function getCustomerDownloads(
   userId: number,
 ) {
-  const orderIds =
-    mockOrders
-      .filter(
-        (order) =>
-          order.userId === userId &&
-          PAID_STATUSES.includes(
-            order.status as
-              (typeof PAID_STATUSES)[number],
-          ),
-      )
-      .map(
-        (order) => order.id,
-      );
-
-  const seen = new Set<number>();
-
-  return mockOrderItems
-    .filter((item) =>
-      orderIds.includes(
-        item.orderId,
+  const rows = await db
+    .select({
+      productId: orderItems.productId,
+      orderItemId: orderItems.id,
+      productSlug: products.slug,
+      productTitle: orderItems.productTitle,
+      licenseName: orderItems.licenseName,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      createdAt: orderItems.createdAt,
+      version: productVersions.version,
+    })
+    .from(orderItems)
+    .innerJoin(
+      orders,
+      eq(orderItems.orderId, orders.id),
+    )
+    .innerJoin(
+      products,
+      eq(orderItems.productId, products.id),
+    )
+    .leftJoin(
+      productVersions,
+      and(
+        eq(productVersions.productId, orderItems.productId),
+        eq(productVersions.isActive, true),
       ),
     )
-    .filter((item) => {
-      if (seen.has(item.productId)) {
-        return false;
-      }
+    .where(
+      and(
+        eq(orders.userId, userId),
+        inArray(orders.status, PAID_STATUSES),
+      ),
+    )
+    .orderBy(desc(orderItems.createdAt));
 
-      seen.add(item.productId);
+  const seen = new Set<number>();
+  const uniqueRows = rows.filter((row) => {
+    if (seen.has(row.productId)) {
+      return false;
+    }
 
-      return true;
-    })
-    .map((item) => {
-      const product =
-        getProduct(item.productId);
+    seen.add(row.productId);
+    return true;
+  });
 
-      const image =
-        product
-          ? getMockProductImages(
-              product.id,
-            ).find(
-              (img) =>
-                img.isPrimary,
-            )
-          : null;
+  const productIds = uniqueRows.map((row) => row.productId);
 
-      const license =
-        mockProductLicenses.find(
-          (licenseItem) =>
-            licenseItem.productId ===
-              item.productId &&
-            licenseItem.licenseId ===
-              item.licenseId,
-        );
+  const imageRows =
+    productIds.length > 0
+      ? await db
+          .select({
+            productId: productImages.productId,
+            url: productImages.url,
+          })
+          .from(productImages)
+          .where(
+            and(
+              inArray(productImages.productId, productIds),
+              eq(productImages.isPrimary, true),
+            ),
+          )
+      : [];
 
-      const licenseInfo =
-        license
-          ? mockLicenses.find(
-              (licenseItem) =>
-                licenseItem.id ===
-                license.licenseId,
-            )
-          : null;
+  const imageMap = new Map<number, string>();
 
-      return {
-        productId:
-          item.productId,
-        orderItemId:
-          item.id,
-        productSlug:
-          product?.slug ?? "",
-        productTitle:
-          item.productTitle,
-        imageUrl:
-          image?.url ?? null,
-        currentVersion:
-          product?.currentVersion ?? "",
-        version:
-          product?.currentVersion ?? "",
-        licenseName:
-          licenseInfo?.name ??
-          item.licenseName,
-        lastUpdatedAt:
-          product?.lastUpdatedAt ??
-          item.createdAt,
-        downloadedAt:
-          item.createdAt,
-      };
-    });
+  for (const image of imageRows) {
+    if (!imageMap.has(image.productId)) {
+      imageMap.set(image.productId, image.url);
+    }
+  }
+
+  return uniqueRows.map((row) => ({
+    productId: row.productId,
+    orderItemId: row.orderItemId,
+    productSlug: row.productSlug,
+    productTitle: row.productTitle,
+    imageUrl: imageMap.get(row.productId) ?? null,
+    currentVersion: row.currentVersion,
+    version: row.version ?? row.currentVersion,
+    licenseName: row.licenseName,
+    lastUpdatedAt: row.lastUpdatedAt,
+    downloadedAt: row.createdAt,
+  }));
 }
 
 export async function hasPurchased(
   userId: number,
   productId: number,
 ) {
-  const orderIds =
-    mockOrders
-      .filter(
-        (order) =>
-          order.userId === userId &&
-          PAID_STATUSES.includes(
-            order.status as
-              (typeof PAID_STATUSES)[number],
-          ),
-      )
-      .map(
-        (order) => order.id,
-      );
-
-  return mockOrderItems.some(
-    (item) =>
-      item.productId === productId &&
-      orderIds.includes(
-        item.orderId,
+  const rows = await db
+    .select({ id: orderItems.id })
+    .from(orderItems)
+    .innerJoin(
+      orders,
+      eq(orderItems.orderId, orders.id),
+    )
+    .where(
+      and(
+        eq(orders.userId, userId),
+        eq(orderItems.productId, productId),
+        inArray(orders.status, PAID_STATUSES),
       ),
-  );
+    )
+    .limit(1);
+
+  return rows.length > 0;
 }
 
 export async function getReviews(
   productId: number,
 ): Promise<ReviewItem[]> {
-  return getMockReviews(
-    productId,
-  ).map((review) => ({
-    id: review.id,
-    rating: review.rating,
-    title: review.title,
-    content: review.content,
-    helpfulVotes:
-      review.helpfulVotes,
-    sellerReply:
-      review.sellerReply,
-    createdAt:
-      review.createdAt,
-    userName:
-      getUserName(review.userId),
-    orderItemId:
-      review.orderItemId,
-  }));
+  const rows = await db
+    .select({
+      id: reviews.id,
+      rating: reviews.rating,
+      title: reviews.title,
+      content: reviews.content,
+      helpfulVotes: reviews.helpfulVotes,
+      sellerReply: reviews.sellerReply,
+      createdAt: reviews.createdAt,
+      userName: users.name,
+      orderItemId: reviews.orderItemId,
+    })
+    .from(reviews)
+    .innerJoin(users, eq(reviews.userId, users.id))
+    .where(
+      and(
+        eq(reviews.productId, productId),
+        eq(reviews.status, "PUBLISHED"),
+      ),
+    )
+    .orderBy(desc(reviews.createdAt));
+
+  return rows;
 }
 
 export async function getReviewSummary(
   productId: number,
 ) {
-  const reviews =
-    getMockReviews(productId);
+  const rows = await db
+    .select({
+      rating: reviews.rating,
+      total: count(),
+    })
+    .from(reviews)
+    .where(
+      and(
+        eq(reviews.productId, productId),
+        eq(reviews.status, "PUBLISHED"),
+      ),
+    )
+    .groupBy(reviews.rating);
 
   const distribution = {
     5: 0,
@@ -894,32 +1273,23 @@ export async function getReviewSummary(
     1: 0,
   };
 
-  for (const review of reviews) {
-    if (
-      review.rating >= 1 &&
-      review.rating <= 5
-    ) {
-      distribution[
-        review.rating as keyof typeof distribution
-      ] += 1;
+  let total = 0;
+  let weighted = 0;
+
+  for (const row of rows) {
+    const rating = row.rating;
+
+    if (rating >= 1 && rating <= 5) {
+      const amount = Number(row.total);
+      distribution[rating as keyof typeof distribution] = amount;
+      total += amount;
+      weighted += rating * amount;
     }
   }
 
-  const count =
-    reviews.length;
-
-  const avg =
-    count === 0
-      ? 0
-      : reviews.reduce(
-          (sum, review) =>
-            sum + review.rating,
-          0,
-        ) / count;
-
   return {
-    avg,
-    count,
+    avg: total === 0 ? 0 : weighted / total,
+    count: total,
     distribution,
   };
 }
@@ -927,61 +1297,74 @@ export async function getReviewSummary(
 export async function getQuestions(
   productId: number,
 ): Promise<QuestionItem[]> {
-  return getMockQuestions(
-    productId,
-  ).map((question) => ({
-    id: question.id,
-    question:
-      question.question,
-    sellerAnswer:
-      question.sellerAnswer,
-    createdAt:
-      question.createdAt,
-    userName:
-      getUserName(question.userId),
-  }));
+  return db
+    .select({
+      id: questions.id,
+      question: questions.question,
+      sellerAnswer: questions.sellerAnswer,
+      createdAt: questions.createdAt,
+      userName: users.name,
+    })
+    .from(questions)
+    .innerJoin(users, eq(questions.userId, users.id))
+    .where(
+      and(
+        eq(questions.productId, productId),
+        eq(questions.status, "OPEN"),
+      ),
+    )
+    .orderBy(desc(questions.createdAt));
 }
 
 export async function getReviewCriteria() {
-  return [...mockReviewCriteria].sort(
-    (a, b) =>
-      a.sortOrder -
-      b.sortOrder,
-  );
+  return db
+    .select()
+    .from(reviewCriteria)
+    .orderBy(asc(reviewCriteria.sortOrder));
 }
 
 export async function getUserReviews(
   userId: number,
 ) {
-  return mockReviews
-    .filter(
-      (review) =>
-        review.userId === userId,
+  const rows = await db
+    .select({
+      id: reviews.id,
+      rating: reviews.rating,
+      title: reviews.title,
+      content: reviews.content,
+      status: reviews.status,
+      helpfulVotes: reviews.helpfulVotes,
+      sellerReply: reviews.sellerReply,
+      sellerRepliedAt: reviews.sellerRepliedAt,
+      createdAt: reviews.createdAt,
+      userId: reviews.userId,
+      productId: reviews.productId,
+      orderItemId: reviews.orderItemId,
+      productSlug: products.slug,
+      productTitle: products.title,
+    })
+    .from(reviews)
+    .innerJoin(
+      products,
+      eq(reviews.productId, products.id),
     )
-    .map((review) => {
-      const product =
-        getProduct(review.productId);
+    .where(eq(reviews.userId, userId))
+    .orderBy(desc(reviews.createdAt));
 
-      return {
-        ...review,
-        userName:
-          getUserName(review.userId),
-        productId:
-          review.productId,
-        productSlug:
-          product?.slug ?? "",
-        productTitle:
-          product?.title ?? "محصول",
-      };
-    });
+  return rows.map((row) => ({
+    ...row,
+    userName: undefined,
+  }));
 }
 
 export async function getUserTickets(
   userId: number,
 ) {
-  return getMockSupportTickets(
-    userId,
-  );
+  return db
+    .select()
+    .from(supportTickets)
+    .where(eq(supportTickets.userId, userId))
+    .orderBy(desc(supportTickets.createdAt));
 }
 
 export async function getTicketDetail(
@@ -992,11 +1375,13 @@ export async function getTicketDetail(
     | { sellerId: number },
   role?: string,
 ) {
-  const ticket =
-    mockSupportTickets.find(
-      (item) =>
-        item.id === ticketId,
-    );
+  const ticketRows = await db
+    .select()
+    .from(supportTickets)
+    .where(eq(supportTickets.id, ticketId))
+    .limit(1);
+
+  const ticket = ticketRows[0];
 
   if (!ticket) {
     return null;
@@ -1010,52 +1395,36 @@ export async function getTicketDetail(
         : undefined;
 
   const sellerId =
-    typeof owner === "object" &&
-      "sellerId" in owner
+    typeof owner === "object" && "sellerId" in owner
       ? owner.sellerId
       : undefined;
 
-  const isAdmin =
-    role === "ADMIN";
+  const authorized =
+    role === "ADMIN" ||
+    (userId !== undefined && ticket.userId === userId) ||
+    (sellerId !== undefined && ticket.sellerId === sellerId);
 
-  const isSeller =
-    sellerId !== undefined &&
-    ticket.sellerId === sellerId;
-
-  const isOwner =
-    userId !== undefined &&
-    ticket.userId === userId;
-
-  if (
-    !isAdmin &&
-    !isSeller &&
-    !isOwner
-  ) {
+  if (!authorized) {
     return null;
   }
 
-  const messages =
-    getMockSupportMessages(
-      ticketId,
-    ).map((message) => {
-      const messageRecord =
-        message as unknown as {
-          userId?: number;
-          authorId?: number;
-          senderId?: number;
-        };
-
-      const authorId =
-        messageRecord.authorId ??
-        messageRecord.senderId ??
-        messageRecord.userId;
-
-      return {
-        ...message,
-        authorName:
-          getUserName(authorId),
-      };
-    });
+  const messages = await db
+    .select({
+      id: supportMessages.id,
+      ticketId: supportMessages.ticketId,
+      authorId: supportMessages.authorId,
+      authorRole: supportMessages.authorRole,
+      content: supportMessages.content,
+      createdAt: supportMessages.createdAt,
+      authorName: users.name,
+    })
+    .from(supportMessages)
+    .innerJoin(
+      users,
+      eq(supportMessages.authorId, users.id),
+    )
+    .where(eq(supportMessages.ticketId, ticketId))
+    .orderBy(asc(supportMessages.createdAt));
 
   return {
     ...ticket,
@@ -1067,737 +1436,1081 @@ export async function getTicketDetail(
 export async function getNotifications(
   userId: number,
 ) {
-  return mockNotifications
-    .filter(
-      (item) =>
-        item.userId === userId,
-    )
-    .sort(
-      (a, b) =>
-        b.createdAt.getTime() -
-        a.createdAt.getTime(),
-    );
+  return db
+    .select()
+    .from(notifications)
+    .where(eq(notifications.userId, userId))
+    .orderBy(desc(notifications.createdAt));
 }
 
 export async function getUnreadNotificationCount(
   userId: number,
 ) {
-  return mockNotifications.filter(
-    (item) =>
-      item.userId === userId &&
-      !item.isRead,
-  ).length;
+  const rows = await db
+    .select({
+      count: count(),
+    })
+    .from(notifications)
+    .where(
+      and(
+        eq(notifications.userId, userId),
+        eq(notifications.isRead, false),
+      ),
+    );
+
+  return Number(rows[0]?.count ?? 0);
 }
 
 export async function getSellerByUserIdForDashboard(
   userId: number,
 ) {
-  return (
-    mockSellers.find(
-      (seller) =>
-        seller.userId === userId,
-    ) ?? null
-  );
+  const rows = await db
+    .select()
+    .from(sellers)
+    .where(eq(sellers.userId, userId))
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 export async function getSellerBalance(
   sellerId: number,
 ) {
-  return mockTransactions
-    .filter(
-      (transaction) =>
-        transaction.sellerId === sellerId,
-    )
-    .reduce(
-      (sum, transaction) =>
-        sum + transaction.amount,
-      0,
-    );
+  const rows = await db
+    .select({
+      amount: sql<number>`coalesce(sum(${transactions.amount}), 0)`,
+    })
+    .from(transactions)
+    .where(eq(transactions.sellerId, sellerId));
+
+  return Number(rows[0]?.amount ?? 0);
 }
 
 export async function getSellerStats(
   sellerId: number,
 ) {
-  const products =
-    getMockSellerProducts(
-      sellerId,
-    );
-
-  const productIds =
-    new Set(
-      products.map(
-        (product) => product.id,
+  const paidItems = await db
+    .select({
+      orderId: orderItems.orderId,
+      finalPrice: orderItems.finalPrice,
+      sellerShare: orderItems.sellerShare,
+    })
+    .from(orderItems)
+    .innerJoin(
+      orders,
+      eq(orderItems.orderId, orders.id),
+    )
+    .where(
+      and(
+        eq(orderItems.sellerId, sellerId),
+        inArray(orders.status, PAID_STATUSES),
       ),
     );
 
-  const sellerOrders =
-    mockOrders.filter(
-      (order) =>
-        PAID_STATUSES.includes(
-          order.status as
-            (typeof PAID_STATUSES)[number],
-        ) &&
-        mockOrderItems.some(
-          (item) =>
-            item.orderId === order.id &&
-            item.sellerId === sellerId,
-        ),
+  const productsRows = await db
+    .select({
+      id: products.id,
+      views: products.views,
+    })
+    .from(products)
+    .where(
+      and(
+        eq(products.sellerId, sellerId),
+        isNull(products.deletedAt),
+      ),
     );
 
-  const items =
-    mockOrderItems.filter(
-      (item) =>
-        item.sellerId === sellerId &&
-        sellerOrders.some(
-          (order) =>
-            order.id === item.orderId,
-        ),
-    );
+  const orderIds = new Set(
+    paidItems.map((item) => item.orderId),
+  );
 
-  const revenue =
-    items.reduce(
-      (sum, item) =>
-        sum + item.finalPrice,
-      0,
-    );
+  const revenue = paidItems.reduce(
+    (sum, item) => sum + item.finalPrice,
+    0,
+  );
 
-  const earnings =
-    items.reduce(
-      (sum, item) =>
-        sum + item.sellerShare,
-      0,
-    );
+  const earnings = paidItems.reduce(
+    (sum, item) => sum + item.sellerShare,
+    0,
+  );
 
-  const views =
-    products.reduce(
-      (sum, product) =>
-        sum + product.views,
-      0,
-    );
+  const views = productsRows.reduce(
+    (sum, product) => sum + product.views,
+    0,
+  );
 
   return {
     revenue,
-    orderCount:
-      sellerOrders.length,
+    orderCount: orderIds.size,
     earnings,
     views,
-    balance:
-      await getSellerBalance(
-        sellerId,
-      ),
-    productCount:
-      productIds.size,
+    balance: await getSellerBalance(sellerId),
+    productCount: productsRows.length,
   };
 }
 
 export async function getSellerProducts(
   sellerId: number,
 ) {
-  return getMockSellerProducts(
-    sellerId,
-  );
+  return db
+    .select()
+    .from(products)
+    .where(
+      and(
+        eq(products.sellerId, sellerId),
+        isNull(products.deletedAt),
+      ),
+    )
+    .orderBy(desc(products.createdAt));
 }
 
 export async function getSellerTransactions(
   sellerId: number,
 ) {
-  return getMockSellerTransactions(
-    sellerId,
-  );
+  return db
+    .select()
+    .from(transactions)
+    .where(eq(transactions.sellerId, sellerId))
+    .orderBy(desc(transactions.createdAt));
 }
 
 export async function getSellerWithdrawals(
   sellerId: number,
 ) {
-  return getMockSellerWithdrawals(
-    sellerId,
-  );
+  return db
+    .select()
+    .from(withdrawals)
+    .where(eq(withdrawals.sellerId, sellerId))
+    .orderBy(desc(withdrawals.requestedAt));
 }
 
 export async function getSellerProductForEdit(
   sellerId: number,
   productId: number,
 ) {
-  const product =
-    mockProducts.find(
-      (item) =>
-        item.id === productId &&
-        item.sellerId === sellerId,
-    );
+  const productRows = await db
+    .select()
+    .from(products)
+    .where(
+      and(
+        eq(products.id, productId),
+        eq(products.sellerId, sellerId),
+      ),
+    )
+    .limit(1);
+
+  const product = productRows[0];
 
   if (!product) {
     return null;
   }
 
+  const [
+    imageRows,
+    featureRows,
+    requirementRows,
+    technologyRows,
+    licenseRows,
+  ] = await Promise.all([
+    db
+      .select()
+      .from(productImages)
+      .where(eq(productImages.productId, productId))
+      .orderBy(asc(productImages.sortOrder)),
+    db
+      .select()
+      .from(productFeatures)
+      .where(eq(productFeatures.productId, productId))
+      .orderBy(asc(productFeatures.sortOrder)),
+    db
+      .select()
+      .from(productRequirements)
+      .where(eq(productRequirements.productId, productId))
+      .orderBy(asc(productRequirements.sortOrder)),
+    db
+      .select({
+        id: technologies.id,
+        technologyId: technologies.id,
+        name: technologies.name,
+        slug: technologies.slug,
+        kind: technologies.kind,
+        icon: technologies.icon,
+      })
+      .from(productTechnologies)
+      .innerJoin(
+        technologies,
+        eq(productTechnologies.technologyId, technologies.id),
+      )
+      .where(eq(productTechnologies.productId, productId))
+      .orderBy(asc(technologies.sortOrder)),
+    db
+      .select({
+        id: productLicenses.id,
+        productId: productLicenses.productId,
+        licenseId: licenses.id,
+        licenseName: licenses.name,
+        licenseKey: licenses.key,
+        price: productLicenses.price,
+        isAvailable: productLicenses.isAvailable,
+        multiplier: licenses.multiplier,
+      })
+      .from(productLicenses)
+      .innerJoin(
+        licenses,
+        eq(productLicenses.licenseId, licenses.id),
+      )
+      .where(eq(productLicenses.productId, productId))
+      .orderBy(asc(licenses.sortOrder)),
+  ]);
+
   return {
     ...product,
-    images:
-      getMockProductImages(
-        productId,
-      ),
-    features:
-      getMockProductFeatures(
-        productId,
-      ).map(
-        (feature) =>
-          feature.text,
-      ),
-    requirements:
-      getMockProductRequirements(
-        productId,
-      ).map(
-        (requirement) =>
-          requirement.text,
-      ),
-    technologies:
-      getMockProductTechnologies(
-        productId,
-      ),
-    technologyIds:
-      getMockProductTechnologies(
-        productId,
-      ).map(
-        (technology) =>
-          technology.technologyId,
-      ),
-    licenses:
-      getMockProductLicenses(
-        productId,
-      ),
+    images: imageRows,
+    features: featureRows.map((feature) => feature.text),
+    requirements: requirementRows.map(
+      (requirement) => requirement.text,
+    ),
+    technologies: technologyRows,
+    technologyIds: technologyRows.map(
+      (technology) => technology.technologyId,
+    ),
+    licenses: licenseRows,
   };
 }
 
 export async function getSellerOrders(
   sellerId: number,
 ) {
-  return mockOrderItems
-    .filter(
-      (item) =>
-        item.sellerId === sellerId,
-    )
-    .map((item) => {
-      const order =
-        mockOrders.find(
-          (candidate) =>
-            candidate.id === item.orderId,
-        );
-
-      const product =
-        getProduct(item.productId);
-
-      const customer =
-        order
-          ? mockUsers.find(
-              (user) =>
-                user.id === order.userId,
-            )
-          : null;
-
-      return {
-        ...(order ?? {}),
-        orderId:
-          order?.id ?? item.orderId,
-        orderNumber:
-          order?.orderNumber ?? "",
-        createdAt:
-          order?.createdAt ??
-          item.createdAt,
-        status:
-          order?.status ?? "PAID",
-        productId:
-          item.productId,
-        productTitle:
-          item.productTitle ||
-          product?.title ||
-          "محصول",
-        customerName:
-          customer?.name ?? "کاربر",
-        finalPrice:
-          item.finalPrice,
-        sellerShare:
-          item.sellerShare,
-        unitPrice:
-          item.unitPrice,
-        discount:
-          item.discount,
-        licenseName:
-          item.licenseName,
-      };
+  const rows = await db
+    .select({
+      orderId: orders.id,
+      orderNumber: orders.orderNumber,
+      orderStatus: orders.status,
+      orderCreatedAt: orders.createdAt,
+      productId: orderItems.productId,
+      productTitle: orderItems.productTitle,
+      customerName: users.name,
+      finalPrice: orderItems.finalPrice,
+      sellerShare: orderItems.sellerShare,
+      unitPrice: orderItems.unitPrice,
+      discount: orderItems.discount,
+      licenseName: orderItems.licenseName,
     })
-    .sort(
-      (a, b) =>
-        b.createdAt.getTime() -
-        a.createdAt.getTime(),
-    );
+    .from(orderItems)
+    .innerJoin(
+      orders,
+      eq(orderItems.orderId, orders.id),
+    )
+    .innerJoin(
+      users,
+      eq(orders.userId, users.id),
+    )
+    .where(eq(orderItems.sellerId, sellerId))
+    .orderBy(desc(orders.createdAt));
+
+  return rows.map((row) => ({
+    id: row.orderId,
+    orderId: row.orderId,
+    orderNumber: row.orderNumber,
+    createdAt: row.orderCreatedAt,
+    status: row.orderStatus,
+    productId: row.productId,
+    productTitle: row.productTitle,
+    customerName: row.customerName,
+    finalPrice: row.finalPrice,
+    sellerShare: row.sellerShare,
+    unitPrice: row.unitPrice,
+    discount: row.discount,
+    licenseName: row.licenseName,
+  }));
 }
 
 export async function getSellerReviews(
   sellerId: number,
 ) {
-  return getMockSellerReviews(
-    sellerId,
-  ).map((review) => {
-    const product =
-      getProduct(review.productId);
+  const rows = await db
+    .select({
+      id: reviews.id,
+      productId: reviews.productId,
+      userId: reviews.userId,
+      rating: reviews.rating,
+      title: reviews.title,
+      content: reviews.content,
+      status: reviews.status,
+      helpfulVotes: reviews.helpfulVotes,
+      sellerReply: reviews.sellerReply,
+      sellerRepliedAt: reviews.sellerRepliedAt,
+      createdAt: reviews.createdAt,
+      orderItemId: reviews.orderItemId,
+      userName: users.name,
+      productTitle: products.title,
+      productSlug: products.slug,
+    })
+    .from(reviews)
+    .innerJoin(
+      products,
+      eq(reviews.productId, products.id),
+    )
+    .innerJoin(
+      users,
+      eq(reviews.userId, users.id),
+    )
+    .where(eq(products.sellerId, sellerId))
+    .orderBy(desc(reviews.createdAt));
 
-    return {
-      ...review,
-      userName:
-        getUserName(review.userId),
-      productTitle:
-        product?.title ?? "محصول",
-      productSlug:
-        product?.slug ?? "",
-    };
-  });
+  return rows;
 }
 
 export async function getSellerQuestions(
   sellerId: number,
 ) {
-  return getMockSellerQuestions(
-    sellerId,
-  ).map((question) => {
-    const product =
-      getProduct(question.productId);
+  const rows = await db
+    .select({
+      id: questions.id,
+      productId: questions.productId,
+      userId: questions.userId,
+      question: questions.question,
+      sellerAnswer: questions.sellerAnswer,
+      answeredAt: questions.answeredAt,
+      status: questions.status,
+      createdAt: questions.createdAt,
+      userName: users.name,
+      productTitle: products.title,
+      productSlug: products.slug,
+    })
+    .from(questions)
+    .innerJoin(
+      products,
+      eq(questions.productId, products.id),
+    )
+    .innerJoin(
+      users,
+      eq(questions.userId, users.id),
+    )
+    .where(eq(products.sellerId, sellerId))
+    .orderBy(desc(questions.createdAt));
 
-    return {
-      ...question,
-      userName:
-        getUserName(question.userId),
-      productTitle:
-        product?.title ?? "محصول",
-      productSlug:
-        product?.slug ?? "",
-    };
-  });
+  return rows;
 }
 
 export async function getSellerTickets(
   sellerId: number,
 ) {
-  return mockSupportTickets
-    .filter(
-      (ticket) =>
-        ticket.sellerId === sellerId,
-    )
-    .sort(
-      (a, b) =>
-        b.createdAt.getTime() -
-        a.createdAt.getTime(),
-    );
+  return db
+    .select()
+    .from(supportTickets)
+    .where(eq(supportTickets.sellerId, sellerId))
+    .orderBy(desc(supportTickets.createdAt));
 }
 
 export async function getAdminStats() {
-  const paidOrders =
-    mockOrders.filter((order) =>
-      PAID_STATUSES.includes(
-        order.status as
-          (typeof PAID_STATUSES)[number],
+  const [
+    revenueRows,
+    orderRows,
+    userRows,
+    productRows,
+    sellerRows,
+    pendingProductRows,
+    pendingApplicationRows,
+    pendingWithdrawalRows,
+    reportRows,
+  ] = await Promise.all([
+    db
+      .select({
+        revenue: sql<number>`coalesce(sum(${orders.total}), 0)`,
+      })
+      .from(orders)
+      .where(inArray(orders.status, PAID_STATUSES)),
+    db
+      .select({ count: count() })
+      .from(orders),
+    db
+      .select({ count: count() })
+      .from(users),
+    db
+      .select({ count: count() })
+      .from(products)
+      .where(isNull(products.deletedAt)),
+    db
+      .select({ count: count() })
+      .from(sellers)
+      .where(eq(sellers.status, "ACTIVE")),
+    db
+      .select({ count: count() })
+      .from(products)
+      .where(
+        and(
+          isNull(products.deletedAt),
+          inArray(products.status, [
+            "SUBMITTED",
+            "UNDER_REVIEW",
+            "CHANGES_REQUESTED",
+          ]),
+        ),
       ),
-    );
+    db
+      .select({ count: count() })
+      .from(sellerApplications)
+      .where(eq(sellerApplications.status, "PENDING")),
+    db
+      .select({ count: count() })
+      .from(withdrawals)
+      .where(eq(withdrawals.status, "REQUESTED")),
+    db
+      .select({ count: count() })
+      .from(reports)
+      .where(eq(reports.status, "OPEN")),
+  ]);
 
-  const pendingProducts =
-    mockProducts.filter(
-      (product) =>
-        [
-          "SUBMITTED",
-          "UNDER_REVIEW",
-          "CHANGES_REQUESTED",
-        ].includes(product.status),
-    );
-
-  const pendingApplications =
-    mockSellers.filter(
-      (seller) =>
-        seller.status !== "ACTIVE",
-    );
-
-  const pendingWithdrawals =
-    mockWithdrawals.filter(
-      (withdrawal) =>
-        withdrawal.status === "REQUESTED",
-    );
-
-  const openReports =
-    mockReports.filter(
-      (report) =>
-        report.status === "OPEN",
-    );
-
-  const productsCount =
-    mockProducts.filter(
-      (product) =>
-        product.deletedAt === null,
-    ).length;
-
-  const sellersCount =
-    mockSellers.filter(
-      (seller) =>
-        seller.status === "ACTIVE",
-    ).length;
+  const revenue = Number(revenueRows[0]?.revenue ?? 0);
+  const orderCount = Number(orderRows[0]?.count ?? 0);
+  const userCount = Number(userRows[0]?.count ?? 0);
+  const productCount = Number(productRows[0]?.count ?? 0);
+  const sellerCount = Number(sellerRows[0]?.count ?? 0);
+  const pendingProducts = Number(
+    pendingProductRows[0]?.count ?? 0,
+  );
+  const pendingSellerApplications = Number(
+    pendingApplicationRows[0]?.count ?? 0,
+  );
+  const pendingWithdrawals = Number(
+    pendingWithdrawalRows[0]?.count ?? 0,
+  );
+  const openReports = Number(
+    reportRows[0]?.count ?? 0,
+  );
 
   return {
-    revenue:
-      paidOrders.reduce(
-        (sum, order) =>
-          sum + order.total,
-        0,
-      ),
-    orderCount:
-      mockOrders.length,
-    ordersCount:
-      mockOrders.length,
-    userCount:
-      mockUsers.length,
-    usersCount:
-      mockUsers.length,
-    productCount:
-      productsCount,
-    productsCount,
-    sellerCount:
-      sellersCount,
-    sellersCount,
-    pendingProducts:
-      pendingProducts.length,
-    pendingSellerApplications:
-      pendingApplications.length,
-    pendingSellers:
-      pendingApplications.length,
-    pendingWithdrawals:
-      pendingWithdrawals.length,
-    openReports:
-      openReports.length,
+    revenue,
+    orderCount,
+    ordersCount: orderCount,
+    userCount,
+    usersCount: userCount,
+    productCount,
+    productsCount: productCount,
+    sellerCount,
+    sellersCount: sellerCount,
+    pendingProducts,
+    pendingSellerApplications,
+    pendingSellers: pendingSellerApplications,
+    pendingWithdrawals,
+    openReports,
   };
 }
 
 export async function getAdminUsers() {
-  return mockUsers;
+  return db
+    .select()
+    .from(users)
+    .orderBy(desc(users.createdAt));
 }
 
 export async function getAdminSellerApplications() {
-  return mockSellers.map(
-    (seller) => {
-      const user =
-        mockUsers.find(
-          (candidate) =>
-            candidate.id === seller.userId,
-        );
+  const rows = await db
+    .select({
+      id: sellerApplications.id,
+      userId: sellerApplications.userId,
+      userName: users.name,
+      userEmail: users.email,
+      username: sellers.username,
+      storeName: sellerApplications.storeName,
+      status: sellerApplications.status,
+      description: sellerApplications.description,
+      portfolioUrl: sellerApplications.portfolioUrl,
+      reviewerNote: sellerApplications.reviewerNote,
+      reviewedAt: sellerApplications.reviewedAt,
+      createdAt: sellerApplications.createdAt,
+    })
+    .from(sellerApplications)
+    .innerJoin(
+      users,
+      eq(sellerApplications.userId, users.id),
+    )
+    .leftJoin(
+      sellers,
+      eq(sellerApplications.userId, sellers.userId),
+    )
+    .orderBy(desc(sellerApplications.createdAt));
 
-      const status:
-        | "PENDING"
-        | "APPROVED"
-        | "REJECTED" =
-        "PENDING";
-
-      return {
-        id: seller.id,
-        userId: seller.userId,
-        userName:
-          user?.name ?? "کاربر",
-        userEmail:
-          user?.email ?? "",
-        username:
-          seller.username,
-        storeName:
-          seller.storeName,
-        status,
-        description:
-          seller.bio ?? "",
-        portfolioUrl:
-          seller.coverUrl ?? null,
-        createdAt:
-          seller.createdAt,
-        user,
-      };
-    },
-  );
+  return rows;
 }
 
 export async function getAdminProducts() {
-  return toProductListItems(
-    mockProducts.filter(
-      (product) =>
-        product.deletedAt === null,
-    ),
-  );
+  const rows = await db
+    .select({
+      id: products.id,
+      slug: products.slug,
+      title: products.title,
+      shortDescription: products.shortDescription,
+      price: products.price,
+      salePrice: products.salePrice,
+      ratingAvg: products.ratingAvg,
+      ratingCount: products.ratingCount,
+      salesCount: products.salesCount,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      status: products.status,
+      demoUrl: products.demoUrl,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+      sellerRating: sellers.rating,
+      categoryId: categories.id,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+    })
+    .from(products)
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(categories, eq(products.categoryId, categories.id))
+    .where(isNull(products.deletedAt))
+    .orderBy(desc(products.createdAt));
+
+  const ids = rows.map((row) => row.id);
+
+  const imageRows =
+    ids.length > 0
+      ? await db
+          .select({
+            productId: productImages.productId,
+            url: productImages.url,
+          })
+          .from(productImages)
+          .where(
+            and(
+              inArray(productImages.productId, ids),
+              eq(productImages.isPrimary, true),
+            ),
+          )
+      : [];
+
+  const imageMap = new Map<number, string>();
+
+  for (const image of imageRows) {
+    if (!imageMap.has(image.productId)) {
+      imageMap.set(image.productId, image.url);
+    }
+  }
+
+  return rows.map((row) => ({
+    ...row,
+    imageUrl: imageMap.get(row.id) ?? null,
+  }));
 }
 
 export async function getAdminProductDetail(
   productId: number,
 ) {
-  const product =
-    getProduct(productId);
+  const rows = await db
+    .select({
+      id: products.id,
+      slug: products.slug,
+      title: products.title,
+      shortDescription: products.shortDescription,
+      price: products.price,
+      salePrice: products.salePrice,
+      ratingAvg: products.ratingAvg,
+      ratingCount: products.ratingCount,
+      salesCount: products.salesCount,
+      currentVersion: products.currentVersion,
+      lastUpdatedAt: products.lastUpdatedAt,
+      status: products.status,
+      demoUrl: products.demoUrl,
+      sellerId: sellers.id,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+      sellerRating: sellers.rating,
+      sellerBio: sellers.bio,
+      sellerTagline: sellers.tagline,
+      sellerAvatarUrl: sellers.avatarUrl,
+      sellerSalesCount: sellers.totalSales,
+      categoryId: categories.id,
+      categoryName: categories.name,
+      categorySlug: categories.slug,
+      description: products.description,
+      seoTitle: products.seoTitle,
+      seoDescription: products.seoDescription,
+      documentationUrl: products.documentationUrl,
+      supportNote: products.supportNote,
+      createdAt: products.createdAt,
+    })
+    .from(products)
+    .innerJoin(sellers, eq(products.sellerId, sellers.id))
+    .innerJoin(categories, eq(products.categoryId, categories.id))
+    .where(eq(products.id, productId))
+    .limit(1);
 
-  const detail =
-    getMockProductDetail(
-      productId,
-    );
+  const product = rows[0];
 
-  if (!product || !detail) {
+  if (!product) {
     return null;
   }
 
+  const [
+    images,
+    features,
+    requirements,
+    technologyRows,
+    licenseRows,
+  ] = await Promise.all([
+    db
+      .select({
+        url: productImages.url,
+        alt: productImages.alt,
+      })
+      .from(productImages)
+      .where(eq(productImages.productId, productId))
+      .orderBy(asc(productImages.sortOrder)),
+    db
+      .select({ text: productFeatures.text })
+      .from(productFeatures)
+      .where(eq(productFeatures.productId, productId))
+      .orderBy(asc(productFeatures.sortOrder)),
+    db
+      .select({ text: productRequirements.text })
+      .from(productRequirements)
+      .where(eq(productRequirements.productId, productId))
+      .orderBy(asc(productRequirements.sortOrder)),
+    db
+      .select({
+        id: technologies.id,
+        name: technologies.name,
+        slug: technologies.slug,
+        kind: technologies.kind,
+      })
+      .from(productTechnologies)
+      .innerJoin(
+        technologies,
+        eq(productTechnologies.technologyId, technologies.id),
+      )
+      .where(eq(productTechnologies.productId, productId))
+      .orderBy(asc(technologies.sortOrder)),
+    db
+      .select({
+        id: productLicenses.id,
+        licenseId: licenses.id,
+        licenseName: licenses.name,
+        licenseKey: licenses.key,
+        multiplier: licenses.multiplier,
+        override: productLicenses.price,
+      })
+      .from(productLicenses)
+      .innerJoin(
+        licenses,
+        eq(productLicenses.licenseId, licenses.id),
+      )
+      .where(eq(productLicenses.productId, productId))
+      .orderBy(asc(licenses.sortOrder)),
+  ]);
+
+  const basePrice = effectivePrice(product);
+
   return {
-    ...detail,
-    createdAt:
-      product.createdAt,
+    ...product,
+    imageUrl: images[0]?.url ?? null,
+    features: features.map((item) => item.text),
+    requirements: requirements.map((item) => item.text),
+    images,
+    technologies: technologyRows,
+    licenses: licenseRows.map((item) => ({
+      id: item.id,
+      licenseId: item.licenseId,
+      licenseName: item.licenseName,
+      licenseKey: item.licenseKey,
+      price: licensePrice(
+        basePrice,
+        item.multiplier,
+        item.override,
+      ),
+    })),
   };
 }
 
 export async function getAdminWithdrawals() {
-  return mockWithdrawals.map(
-    (withdrawal) => {
-      const seller =
-        getSeller(
-          withdrawal.sellerId,
-        );
+  const rows = await db
+    .select({
+      id: withdrawals.id,
+      sellerId: withdrawals.sellerId,
+      amount: withdrawals.amount,
+      status: withdrawals.status,
+      method: withdrawals.method,
+      accountDetails: withdrawals.accountDetails,
+      adminNote: withdrawals.adminNote,
+      payoutReference: withdrawals.payoutReference,
+      requestedAt: withdrawals.requestedAt,
+      processedAt: withdrawals.processedAt,
+      processedBy: withdrawals.processedBy,
+      sellerName: sellers.storeName,
+      sellerUsername: sellers.username,
+    })
+    .from(withdrawals)
+    .innerJoin(
+      sellers,
+      eq(withdrawals.sellerId, sellers.id),
+    )
+    .orderBy(desc(withdrawals.requestedAt));
 
-      return {
-        ...withdrawal,
-        seller,
-        sellerName:
-          seller?.storeName ??
-          "فروشنده",
-        sellerUsername:
-          seller?.username ?? "",
-      };
+  return rows.map((row) => ({
+    ...row,
+    seller: {
+      id: row.sellerId,
+      storeName: row.sellerName,
+      username: row.sellerUsername,
     },
-  );
+  }));
 }
 
 export async function getAdminReports() {
-  return mockReports.map(
-    (report) => ({
-      ...report,
-      reporter:
-        mockUsers.find(
-          (user) =>
-            user.id === report.reporterId,
-        ) ?? null,
-      reporterName:
-        getUserName(
-          report.reporterId,
-        ),
-    }),
-  );
+  const rows = await db
+    .select({
+      id: reports.id,
+      reporterId: reports.reporterId,
+      targetType: reports.targetType,
+      targetId: reports.targetId,
+      reason: reports.reason,
+      details: reports.details,
+      status: reports.status,
+      reviewerNote: reports.reviewerNote,
+      reviewedAt: reports.reviewedAt,
+      reviewedBy: reports.reviewedBy,
+      createdAt: reports.createdAt,
+      reporterName: users.name,
+      reporterEmail: users.email,
+    })
+    .from(reports)
+    .innerJoin(
+      users,
+      eq(reports.reporterId, users.id),
+    )
+    .orderBy(desc(reports.createdAt));
+
+  return rows.map((row) => ({
+    ...row,
+    reporter: {
+      id: row.reporterId,
+      name: row.reporterName,
+      email: row.reporterEmail,
+    },
+  }));
 }
 
 export async function getAdminCoupons() {
-  return mockCoupons;
+  return db
+    .select()
+    .from(coupons)
+    .orderBy(desc(coupons.createdAt));
 }
 
-export async function getAdminOrders(): Promise<
-  AdminOrderRow[]
-> {
-  const result: AdminOrderRow[] = [];
+export async function getAdminOrders() {
+  const rows = await db
+    .select({
+      id: orders.id,
+      orderNumber: orders.orderNumber,
+      userId: orders.userId,
+      status: orders.status,
+      subtotal: orders.subtotal,
+      discount: orders.discount,
+      total: orders.total,
+      platformFee: orders.platformFee,
+      paymentMethod: orders.paymentMethod,
+      paidAt: orders.paidAt,
+      refundedAt: orders.refundedAt,
+      cancellationReason: orders.cancellationReason,
+      metadata: orders.metadata,
+      createdAt: orders.createdAt,
+      updatedAt: orders.updatedAt,
+      customerName: users.name,
+      itemId: orderItems.id,
+      productTitle: orderItems.productTitle,
+      finalPrice: orderItems.finalPrice,
+      sellerShare: orderItems.sellerShare,
+      sellerName: sellers.storeName,
+      licenseName: orderItems.licenseName,
+    })
+    .from(orders)
+    .innerJoin(users, eq(orders.userId, users.id))
+    .leftJoin(
+      orderItems,
+      eq(orderItems.orderId, orders.id),
+    )
+    .leftJoin(
+      sellers,
+      eq(orderItems.sellerId, sellers.id),
+    )
+    .orderBy(desc(orders.createdAt));
 
-  for (const order of mockOrders) {
-    const customer =
-      mockUsers.find(
-        (user) =>
-          user.id === order.userId,
-      );
-
-    const items =
-      getMockOrderItems(order.id);
-
-    if (items.length === 0) {
-      result.push({
-        ...order,
-        customerName:
-          customer?.name ?? "کاربر",
-        productTitle:
-          "سفارش",
-        finalPrice:
-          order.total,
-        sellerShare:
-          0,
-        sellerName:
-          "فروشنده",
-        licenseName:
-          "",
-        itemId:
-          0,
-        items,
-      });
-
-      continue;
+  const grouped = new Map<
+    number,
+    {
+      order: typeof rows[number];
+      items: typeof rows;
     }
+  >();
 
-    for (const item of items) {
-      result.push({
-        ...order,
-        customerName:
-          customer?.name ?? "کاربر",
-        productTitle:
-          item.productTitle,
-        finalPrice:
-          item.finalPrice,
-        sellerShare:
-          item.sellerShare,
-        sellerName:
-          getSeller(
-            item.sellerId,
-          )?.storeName ??
-          "فروشنده",
-        licenseName:
-          item.licenseName,
-        itemId:
-          item.id,
-        items,
+  for (const row of rows) {
+    const existing = grouped.get(row.id);
+
+    if (existing) {
+      existing.items.push(row);
+    } else {
+      grouped.set(row.id, {
+        order: row,
+        items: [row],
       });
     }
   }
 
-  return result;
+  return Array.from(grouped.values()).flatMap(
+    ({ order, items }) => {
+      const validItems = items.filter(
+        (item) => item.itemId !== null,
+      );
+
+      if (validItems.length === 0) {
+        return [
+          {
+            ...order,
+            productTitle: "سفارش",
+            finalPrice: order.total,
+            sellerShare: 0,
+            sellerName: "فروشنده",
+            licenseName: "",
+            itemId: 0,
+            items,
+          },
+        ];
+      }
+
+      return validItems.map((item) => ({
+        ...order,
+        productTitle: item.productTitle ?? "محصول",
+        finalPrice: item.finalPrice ?? 0,
+        sellerShare: item.sellerShare ?? 0,
+        sellerName: item.sellerName ?? "فروشنده",
+        licenseName: item.licenseName ?? "",
+        itemId: item.itemId ?? 0,
+        items,
+      }));
+    },
+  );
 }
 
 export async function getCollections() {
-  return mockCollections
-    .filter(
-      (collection) =>
-        collection.isVisible,
-    )
-    .sort(
-      (a, b) =>
-        a.sortOrder -
-        b.sortOrder,
+  return db
+    .select()
+    .from(collections)
+    .where(eq(collections.isVisible, true))
+    .orderBy(
+      asc(collections.sortOrder),
+      asc(collections.name),
     );
 }
 
 export async function getCollectionBySlug(
   slug: string,
 ) {
-  const collection =
-    getMockCollectionBySlug(
-      slug,
-    );
+  const collectionRows = await db
+    .select()
+    .from(collections)
+    .where(
+      and(
+        eq(collections.slug, slug),
+        eq(collections.isVisible, true),
+      ),
+    )
+    .limit(1);
+
+  const collection = collectionRows[0];
 
   if (!collection) {
     return null;
   }
 
-  const productIds =
-    mockCollectionProducts
-      .filter(
-        (item) =>
-          item.collectionId ===
-          collection.id,
-      )
-      .sort(
-        (a, b) =>
-          a.sortOrder -
-          b.sortOrder,
-      )
-      .map(
-        (item) =>
-          item.productId,
-      );
+  const productRows = await db
+    .select({
+      productId: collectionProducts.productId,
+    })
+    .from(collectionProducts)
+    .where(
+      eq(
+        collectionProducts.collectionId,
+        collection.id,
+      ),
+    )
+    .orderBy(asc(collectionProducts.sortOrder));
 
-  const products =
-    toProductListItems(
-      productIds
-        .map((id) =>
-          getProduct(id),
-        )
-        .filter(
-          (
-            product,
-          ): product is (typeof mockProducts)[number] =>
-            product !== null,
-        ),
-    );
+  const productIds = productRows.map(
+    (row) => row.productId,
+  );
+
+  const productList = await getProductListItemsByIds(
+    productIds,
+  );
 
   return {
     ...collection,
     productIds,
-    products,
+    products: productList,
   };
 }
 
 export async function getBlogPosts(
   limit?: number,
 ) {
-  const posts =
-    mockBlogPosts
-      .filter(
-        (post) =>
-          post.status === "PUBLISHED",
-      )
-      .sort(
-        (a, b) =>
-          (b.publishedAt?.getTime() ?? 0) -
-          (a.publishedAt?.getTime() ?? 0),
-      )
-      .map((post) => ({
-        ...post,
-        author:
-          mockUsers.find(
-            (user) =>
-              user.id === post.authorId,
-          ) ?? null,
-        authorName:
-          getUserName(
-            post.authorId,
-          ),
-      }));
+  const query = db
+    .select({
+      id: blogPosts.id,
+      authorId: blogPosts.authorId,
+      title: blogPosts.title,
+      slug: blogPosts.slug,
+      excerpt: blogPosts.excerpt,
+      content: blogPosts.content,
+      coverImage: blogPosts.coverImage,
+      status: blogPosts.status,
+      publishedAt: blogPosts.publishedAt,
+      seoTitle: blogPosts.seoTitle,
+      seoDescription: blogPosts.seoDescription,
+      createdAt: blogPosts.createdAt,
+      updatedAt: blogPosts.updatedAt,
+      authorName: users.name,
+      authorEmail: users.email,
+    })
+    .from(blogPosts)
+    .innerJoin(users, eq(blogPosts.authorId, users.id))
+    .where(eq(blogPosts.status, "PUBLISHED"))
+    .orderBy(desc(blogPosts.publishedAt));
 
-  return limit
-    ? posts.slice(0, limit)
-    : posts;
+  const posts = limit
+    ? await query.limit(limit)
+    : await query;
+
+  return posts.map((post) => ({
+    ...post,
+    author: {
+      id: post.authorId,
+      name: post.authorName,
+      email: post.authorEmail,
+    },
+  }));
 }
 
 export async function getBlogPost(
   slug: string,
 ) {
-  const post =
-    getMockBlogPostBySlug(slug);
+  const rows = await db
+    .select({
+      id: blogPosts.id,
+      authorId: blogPosts.authorId,
+      title: blogPosts.title,
+      slug: blogPosts.slug,
+      excerpt: blogPosts.excerpt,
+      content: blogPosts.content,
+      coverImage: blogPosts.coverImage,
+      status: blogPosts.status,
+      publishedAt: blogPosts.publishedAt,
+      seoTitle: blogPosts.seoTitle,
+      seoDescription: blogPosts.seoDescription,
+      createdAt: blogPosts.createdAt,
+      updatedAt: blogPosts.updatedAt,
+      authorName: users.name,
+      authorEmail: users.email,
+    })
+    .from(blogPosts)
+    .innerJoin(users, eq(blogPosts.authorId, users.id))
+    .where(
+      and(
+        eq(blogPosts.slug, slug),
+        eq(blogPosts.status, "PUBLISHED"),
+      ),
+    )
+    .limit(1);
 
-  if (
-    !post ||
-    post.status !== "PUBLISHED"
-  ) {
+  const post = rows[0];
+
+  if (!post) {
     return null;
   }
 
+  const tags = await db
+    .select({
+      id: blogTags.id,
+      name: blogTags.name,
+      slug: blogTags.slug,
+    })
+    .from(blogPostTags)
+    .innerJoin(
+      blogTags,
+      eq(blogPostTags.tagId, blogTags.id),
+    )
+    .where(eq(blogPostTags.postId, post.id));
+
   return {
     ...post,
-    author:
-      mockUsers.find(
-        (user) =>
-          user.id === post.authorId,
-      ) ?? null,
-    authorName:
-      getUserName(
-        post.authorId,
-      ),
+    author: {
+      id: post.authorId,
+      name: post.authorName,
+      email: post.authorEmail,
+    },
+    tags,
   };
 }
 
 export async function getAdminBlogPosts() {
-  return [
-    ...mockBlogPosts,
-  ].sort(
-    (a, b) =>
-      b.createdAt.getTime() -
-      a.createdAt.getTime(),
-  );
+  const rows = await db
+    .select({
+      id: blogPosts.id,
+      authorId: blogPosts.authorId,
+      title: blogPosts.title,
+      slug: blogPosts.slug,
+      excerpt: blogPosts.excerpt,
+      content: blogPosts.content,
+      coverImage: blogPosts.coverImage,
+      status: blogPosts.status,
+      publishedAt: blogPosts.publishedAt,
+      seoTitle: blogPosts.seoTitle,
+      seoDescription: blogPosts.seoDescription,
+      createdAt: blogPosts.createdAt,
+      updatedAt: blogPosts.updatedAt,
+      authorName: users.name,
+      authorEmail: users.email,
+    })
+    .from(blogPosts)
+    .innerJoin(users, eq(blogPosts.authorId, users.id))
+    .orderBy(desc(blogPosts.createdAt));
+
+  return rows.map((post) => ({
+    ...post,
+    author: {
+      id: post.authorId,
+      name: post.authorName,
+      email: post.authorEmail,
+    },
+  }));
 }
 
 export async function getPage(
   slug: string,
 ) {
-  return getMockPageBySlug(slug);
+  const rows = await db
+    .select()
+    .from(pages)
+    .where(eq(pages.slug, slug))
+    .limit(1);
+
+  return rows[0] ?? null;
 }
 
 export async function getSiteSettings() {
+  const rows = await db
+    .select({
+      key: settings.key,
+      value: settings.value,
+    })
+    .from(settings);
+
   return Object.fromEntries(
-    mockSettings.map(
-      (setting) => [
-        setting.key,
-        setting.value,
-      ],
-    ),
+    rows.map((setting) => [
+      setting.key,
+      setting.value,
+    ]),
   );
 }
