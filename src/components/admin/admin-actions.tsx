@@ -72,17 +72,48 @@ export function UserStatusSelect({ userId, current }: { userId: number; current:
 }
 
 export function SellerDecisionForm({ applicationId }: { applicationId: number }) {
-  const [state, formAction, pending] = useActionState(reviewSellerApplicationAction, {});
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
+
+  const handleSubmit = (formData: FormData) => {
+    startTransition(async () => {
+      const result = await reviewSellerApplicationAction({}, formData);
+
+      if (result.error) {
+        alert(result.error);
+        return;
+      }
+
+      router.refresh();
+    });
+  };
+
   return (
-    <form action={formAction} className="space-y-2">
+    <form action={handleSubmit} className="space-y-2">
       <input type="hidden" name="applicationId" value={applicationId} />
-      <Textarea name="note" placeholder="یادداشت (اختیاری)" className="min-h-[60px]" />
-      {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
+      <Textarea
+        name="note"
+        placeholder="یادداشت (اختیاری)"
+        className="min-h-[60px]"
+      />
       <div className="flex gap-2">
-        <Button type="submit" size="sm" name="decision" value="APPROVED" disabled={pending}>
+        <Button
+          type="submit"
+          size="sm"
+          name="decision"
+          value="APPROVED"
+          disabled={pending}
+        >
           تأیید
         </Button>
-        <Button type="submit" size="sm" variant="danger" name="decision" value="REJECTED" disabled={pending}>
+        <Button
+          type="submit"
+          size="sm"
+          variant="danger"
+          name="decision"
+          value="REJECTED"
+          disabled={pending}
+        >
           رد
         </Button>
       </div>
