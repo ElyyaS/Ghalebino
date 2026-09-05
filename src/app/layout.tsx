@@ -14,19 +14,30 @@ const vazirmatn = Vazirmatn({
 });
 
 export const metadata: Metadata = {
-  metadataBase: new URL(process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000"),
+  metadataBase: new URL(
+    process.env.NEXT_PUBLIC_APP_URL ?? "http://localhost:3000",
+  ),
   title: {
-    default: "قالبی نو | مارکت‌پلیس قالب و محصولات وب",
+    default: "قالبی نو | مارکت قالب و محصولات وب",
     template: "%s | قالبی نو",
   },
   description:
-    "قالبی نو، مارکت‌پلیس تخصصی قالب‌های وب؛ خرید و فروش قالب HTML، React، Next.js، وردپرس، داشبورد و رابط کاربری با پشتیبانی فارسی.",
-  keywords: ["قالب", "مارکت", "قالب وب", "وردپرس", "ری‌اکت", "نکست", "قالب فروشگاهی"],
+    "قالبی نو، مارکت تخصصی قالب‌ها و محصولات وب؛ خرید و فروش قالب HTML، React، Next.js، وردپرس، داشبورد و رابط کاربری با پشتیبانی فارسی.",
+  keywords: [
+    "قالب",
+    "مارکت",
+    "قالب وب",
+    "وردپرس",
+    "ری‌اکت",
+    "نکست",
+    "قالب فروشگاهی",
+  ],
   openGraph: {
     type: "website",
     locale: "fa_IR",
-    title: "قالبی نو | مارکت‌پلیس قالب و محصولات وب",
-    description: "خرید و فروش قالب‌های حرفه‌ای وب برای توسعه‌دهندگان فارسی‌زبان.",
+    title: "قالبی نو | مارکت قالب و محصولات وب",
+    description:
+      "خرید و فروش قالب‌ها و محصولات حرفه‌ای وب برای توسعه‌دهندگان و کسب‌وکارهای فارسی‌زبان.",
   },
 };
 

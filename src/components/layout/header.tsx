@@ -9,7 +9,6 @@ import {
 } from "./header-actions";
 
 import { getSessionUser, getCartOwner } from "@/lib/auth";
-
 import { mockCategories } from "@/server/mock-data";
 
 import {
@@ -18,7 +17,7 @@ import {
 } from "@/server/queries";
 
 const NAV = [
-  { href: "/marketplace", label: "بازارچه" },
+  { href: "/marketplace", label: "مارکت" },
   { href: "/sellers", label: "فروشندگان" },
   { href: "/blog", label: "وبلاگ" },
   { href: "/help", label: "راهنما" },
@@ -36,7 +35,6 @@ export async function Header() {
     : null;
 
   const categories = mockCategories;
-
   const owner = await getCartOwner(false);
 
   const [lines, unread] = await Promise.all([
