@@ -46,37 +46,82 @@ async function ensureUniqueUsername(base: string): Promise<string> {
   }
 }
 
-export async function reviewSellerApplicationAction(_prev: FormState, formData: FormData): Promise<FormState> {
+export async function reviewSellerApplicationAction(
+  _prev: FormState,
+  formData: FormData,
+): Promise<FormState> {
   try {
     const admin = await requireAdmin();
     const id = Number(formData.get("applicationId"));
     const decision = String(formData.get("decision"));
-    const note = String(formData.get("note") ?? "");
+    const note = String(formData.get("note") ?? "").trim();
+
+    if (!Number.isInteger(id) || id <= 0) {
+      throw new AppError("شناسه درخواست نامعتبر است.");
+    }
+
+    if (!["APPROVED", "REJECTED"].includes(decision)) {
+      throw new AppError("تصمیم نامعتبر است.");
+    }
 
     const [app] = await db
       .select()
       .from(sellerApplications)
       .where(eq(sellerApplications.id, id))
       .limit(1);
-    if (!app) throw new AppError("درخواست یافت نشد.", 404);
-    if (app.status !== "PENDING") throw new AppError("این درخواست قبلاً بررسی شده است.");
+
+    if (!app) {
+      throw new AppError("درخواست یافت نشد.", 404);
+    }
+
+    if (app.status !== "PENDING") {
+      throw new AppError("این درخواست قبلاً بررسی شده است.");
+    }
 
     if (decision === "APPROVED") {
+      const [existingSeller] = await db
+        .select({ id: sellers.id })
+        .from(sellers)
+        .where(eq(sellers.userId, app.userId))
+        .limit(1);
+
+      if (existingSeller) {
+        throw new AppError("این کاربر قبلاً حساب فروشندگی دارد.");
+      }
+
       const username = await ensureUniqueUsername(slugify(app.storeName));
-      await db.insert(sellers).values({
-        userId: app.userId,
-        username,
-        storeName: app.storeName,
-        tagline: "فروشگاه قالب و محصولات وب",
-        bio: app.description,
-        status: "ACTIVE",
-        approvedAt: new Date(),
+      const now = new Date();
+
+      await db.transaction(async (tx) => {
+        await tx.insert(sellers).values({
+          userId: app.userId,
+          username,
+          storeName: app.storeName,
+          tagline: "فروشگاه قالب و محصولات وب",
+          bio: app.description,
+          status: "ACTIVE",
+          approvedAt: now,
+        });
+
+        await tx
+          .update(users)
+          .set({
+            role: "SELLER",
+            updatedAt: now,
+          })
+          .where(eq(users.id, app.userId));
+
+        await tx
+          .update(sellerApplications)
+          .set({
+            status: "APPROVED",
+            reviewedAt: now,
+            reviewedBy: admin.id,
+            reviewerNote: note || null,
+          })
+          .where(eq(sellerApplications.id, id));
       });
-      await db.update(users).set({ role: "SELLER" }).where(eq(users.id, app.userId));
-      await db
-        .update(sellerApplications)
-        .set({ status: "APPROVED", reviewedAt: new Date(), reviewedBy: admin.id, reviewerNote: note })
-        .where(eq(sellerApplications.id, id));
+
       await notify(app.userId, {
         type: "SELLER_APPLICATION",
         title: "درخواست فروشندگی تأیید شد",
@@ -84,10 +129,18 @@ export async function reviewSellerApplicationAction(_prev: FormState, formData: 
         link: "/dashboard/seller",
       });
     } else {
+      const now = new Date();
+
       await db
         .update(sellerApplications)
-        .set({ status: "REJECTED", reviewedAt: new Date(), reviewedBy: admin.id, reviewerNote: note })
+        .set({
+          status: "REJECTED",
+          reviewedAt: now,
+          reviewedBy: admin.id,
+          reviewerNote: note || null,
+        })
         .where(eq(sellerApplications.id, id));
+
       await notify(app.userId, {
         type: "SELLER_APPLICATION",
         title: "درخواست فروشندگی رد شد",
@@ -96,10 +149,21 @@ export async function reviewSellerApplicationAction(_prev: FormState, formData: 
       });
     }
 
-    await audit(admin.id, decision === "APPROVED" ? "SELLER_APPROVED" : "SELLER_REJECTED", "seller_application", id, { note });
+    await audit(
+      admin.id,
+      decision === "APPROVED" ? "SELLER_APPROVED" : "SELLER_REJECTED",
+      "seller_application",
+      id,
+      { note },
+    );
+
     return { message: "بررسی انجام شد." };
   } catch (err) {
-    if (err instanceof AppError) return { error: err.message };
+    if (err instanceof AppError) {
+      return { error: err.message };
+    }
+
+    console.error("[review-seller-application]", err);
     return { error: "خطایی رخ داد." };
   }
 }
