@@ -10,7 +10,7 @@ export default async function AdminOverviewPage() {
   const stats = await getAdminStats();
 
   const pending = [
-    { label: "درخواست فروشندگی", count: stats.pendingSellers, href: "/admin/sellers" },
+    { label: "درخواست فروشندگی", count: stats.pendingSellers, href: "/admin/sellers/applications" },
     { label: "محصول در انتظار بررسی", count: stats.pendingProducts, href: "/admin/products" },
     { label: "درخواست برداشت", count: stats.pendingWithdrawals, href: "/admin/withdrawals" },
     { label: "گزارش باز", count: stats.openReports, href: "/admin/reports" },
@@ -33,8 +33,14 @@ export default async function AdminOverviewPage() {
         {pending.length > 0 ? (
           <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-4">
             {pending.map((p) => (
-              <Link key={p.href} href={p.href} className="rounded-xl border border-slate-200 p-4 hover:border-brand-300">
-                <p className="text-2xl font-bold text-slate-900">{p.count.toLocaleString("fa-IR")}</p>
+              <Link
+                key={p.href}
+                href={p.href}
+                className="rounded-xl border border-slate-200 p-4 hover:border-brand-300"
+              >
+                <p className="text-2xl font-bold text-slate-900">
+                  {p.count.toLocaleString("fa-IR")}
+                </p>
                 <p className="mt-1 text-sm text-slate-500">{p.label}</p>
               </Link>
             ))}
@@ -49,7 +55,10 @@ export default async function AdminOverviewPage() {
           { label: "فروشندگان فعال", value: stats.sellersCount, icon: Wallet },
           { label: "درآمد ناخالص", value: formatCompact(stats.revenue), icon: Banknote },
         ].map((s) => (
-          <div key={s.label} className="rounded-2xl border border-slate-200 bg-white p-4 text-center">
+          <div
+            key={s.label}
+            className="rounded-2xl border border-slate-200 bg-white p-4 text-center"
+          >
             <p className="text-lg font-bold text-slate-900">{s.value}</p>
             <p className="mt-1 text-xs text-slate-500">{s.label}</p>
           </div>

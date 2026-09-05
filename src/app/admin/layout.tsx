@@ -8,6 +8,7 @@ const NAV: NavItem[] = [
   { href: "/admin", label: "نمای کلی", icon: "dashboard" },
   { href: "/admin/users", label: "کاربران", icon: "users" },
   { href: "/admin/sellers", label: "فروشندگان", icon: "wallet" },
+  { href: "/admin/sellers/applications", label: "درخواست‌های فروشندگی", icon: "users" },
   { href: "/admin/products", label: "محصولات", icon: "package" },
   {
     href: "/admin/categories",
@@ -37,11 +38,13 @@ export default async function AdminLayout({
     redirect("/");
   }
 
-  return (<DashboardShell
-    title="پنل مدیریت"
-    subtitle="مدیریت بازارچه قالبی نو"
-    items={NAV}
-  >
-    {children} </DashboardShell>
+  return (
+    <DashboardShell
+      title="پنل مدیریت"
+      subtitle="مدیریت بازارچه قالبی نو"
+      items={NAV}
+    >
+      {children}
+    </DashboardShell>
   );
 }

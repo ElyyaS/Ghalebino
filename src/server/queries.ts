@@ -442,18 +442,18 @@ export async function listProducts(
   const imageRows =
     ids.length > 0
       ? await db
-          .select({
-            productId: productImages.productId,
-            url: productImages.url,
-          })
-          .from(productImages)
-          .where(
-            and(
-              inArray(productImages.productId, ids),
-              eq(productImages.isPrimary, true),
-            ),
-          )
-          .orderBy(asc(productImages.sortOrder))
+        .select({
+          productId: productImages.productId,
+          url: productImages.url,
+        })
+        .from(productImages)
+        .where(
+          and(
+            inArray(productImages.productId, ids),
+            eq(productImages.isPrimary, true),
+          ),
+        )
+        .orderBy(asc(productImages.sortOrder))
       : [];
 
   const imageMap = new Map<number, string>();
@@ -846,6 +846,35 @@ export async function getAllSellers() {
     .orderBy(desc(sellers.rating), desc(sellers.totalSales));
 }
 
+export async function getAdminSellers() {
+  return db
+    .select({
+      id: sellers.id,
+      userId: sellers.userId,
+      username: sellers.username,
+      storeName: sellers.storeName,
+      tagline: sellers.tagline,
+      bio: sellers.bio,
+      avatarUrl: sellers.avatarUrl,
+      coverUrl: sellers.coverUrl,
+      rating: sellers.rating,
+      ratingCount: sellers.ratingCount,
+      totalSales: sellers.totalSales,
+      totalProducts: sellers.totalProducts,
+      responseTime: sellers.responseTime,
+      status: sellers.status,
+      approvedAt: sellers.approvedAt,
+      createdAt: sellers.createdAt,
+      updatedAt: sellers.updatedAt,
+      userName: users.name,
+      userEmail: users.email,
+    })
+    .from(sellers)
+    .innerJoin(users, eq(sellers.userId, users.id))
+    .where(eq(sellers.status, "ACTIVE"))
+    .orderBy(desc(sellers.createdAt));
+}
+
 export async function getCartLines(
   owner:
     | number
@@ -901,17 +930,17 @@ export async function getCartLines(
   const imageRows =
     ids.length > 0
       ? await db
-          .select({
-            productId: productImages.productId,
-            url: productImages.url,
-          })
-          .from(productImages)
-          .where(
-            and(
-              inArray(productImages.productId, ids),
-              eq(productImages.isPrimary, true),
-            ),
-          )
+        .select({
+          productId: productImages.productId,
+          url: productImages.url,
+        })
+        .from(productImages)
+        .where(
+          and(
+            inArray(productImages.productId, ids),
+            eq(productImages.isPrimary, true),
+          ),
+        )
       : [];
 
   const imageMap = new Map<number, string>();
@@ -1076,17 +1105,17 @@ export async function getOrderDetail(
   const imageRows =
     productIds.length > 0
       ? await db
-          .select({
-            productId: productImages.productId,
-            url: productImages.url,
-          })
-          .from(productImages)
-          .where(
-            and(
-              inArray(productImages.productId, productIds),
-              eq(productImages.isPrimary, true),
-            ),
-          )
+        .select({
+          productId: productImages.productId,
+          url: productImages.url,
+        })
+        .from(productImages)
+        .where(
+          and(
+            inArray(productImages.productId, productIds),
+            eq(productImages.isPrimary, true),
+          ),
+        )
       : [];
 
   const imageMap = new Map<number, string>();
@@ -1162,17 +1191,17 @@ export async function getCustomerDownloads(
   const imageRows =
     productIds.length > 0
       ? await db
-          .select({
-            productId: productImages.productId,
-            url: productImages.url,
-          })
-          .from(productImages)
-          .where(
-            and(
-              inArray(productImages.productId, productIds),
-              eq(productImages.isPrimary, true),
-            ),
-          )
+        .select({
+          productId: productImages.productId,
+          url: productImages.url,
+        })
+        .from(productImages)
+        .where(
+          and(
+            inArray(productImages.productId, productIds),
+            eq(productImages.isPrimary, true),
+          ),
+        )
       : [];
 
   const imageMap = new Map<number, string>();
@@ -1970,17 +1999,17 @@ export async function getAdminProducts() {
   const imageRows =
     ids.length > 0
       ? await db
-          .select({
-            productId: productImages.productId,
-            url: productImages.url,
-          })
-          .from(productImages)
-          .where(
-            and(
-              inArray(productImages.productId, ids),
-              eq(productImages.isPrimary, true),
-            ),
-          )
+        .select({
+          productId: productImages.productId,
+          url: productImages.url,
+        })
+        .from(productImages)
+        .where(
+          and(
+            inArray(productImages.productId, ids),
+            eq(productImages.isPrimary, true),
+          ),
+        )
       : [];
 
   const imageMap = new Map<number, string>();
