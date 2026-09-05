@@ -1,9 +1,14 @@
 "use client";
 
-import { useActionState, useTransition } from "react";
+import { useActionState, useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Send, Trash2 } from "lucide-react";
-import { deleteProductAction, requestWithdrawalAction, submitProductAction, updateStoreAction } from "@/server/actions/seller";
+import {
+  deleteProductAction,
+  requestWithdrawalAction,
+  submitProductAction,
+  updateStoreAction,
+} from "@/server/actions/seller";
 import { replyToReviewAction, answerQuestionAction } from "@/server/actions/seller";
 import { Button } from "@/components/ui/button";
 import { Field, Input, Select, Textarea } from "@/components/ui/forms";
@@ -12,6 +17,7 @@ import { Alert } from "@/components/ui/feedback";
 export function SubmitProductButton({ productId }: { productId: number }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+
   return (
     <Button
       variant="subtle"
@@ -34,6 +40,7 @@ export function SubmitProductButton({ productId }: { productId: number }) {
 export function DeleteProductButton({ productId }: { productId: number }) {
   const router = useRouter();
   const [pending, start] = useTransition();
+
   return (
     <button
       disabled={pending}
@@ -55,13 +62,21 @@ export function DeleteProductButton({ productId }: { productId: number }) {
 
 export function WithdrawalForm({ balance }: { balance: number }) {
   const [state, formAction, pending] = useActionState(requestWithdrawalAction, {});
+
   return (
-    <form action={formAction} className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
+    <form
+      action={formAction}
+      className="space-y-4 rounded-2xl border border-slate-200 bg-white p-5"
+    >
       <h2 className="font-semibold text-slate-900">درخواست برداشت</h2>
-      <p className="text-sm text-slate-500">موجودی قابل برداشت: {balance.toLocaleString("fa-IR")} تومان</p>
+      <p className="text-sm text-slate-500">
+        موجودی قابل برداشت: {balance.toLocaleString("fa-IR")} تومان
+      </p>
+
       <Field label="مبلغ (تومان)" htmlFor="amount">
         <Input id="amount" name="amount" type="number" min={10000} required />
       </Field>
+
       <Field label="روش پرداخت" htmlFor="method">
         <Select id="method" name="method" defaultValue="bank">
           <option value="bank">حساب بانکی</option>
@@ -69,11 +84,14 @@ export function WithdrawalForm({ balance }: { balance: number }) {
           <option value="wallet">کیف پول</option>
         </Select>
       </Field>
+
       <Field label="اطلاعات حساب مقصد" htmlFor="accountDetails">
         <Input id="accountDetails" name="accountDetails" required />
       </Field>
+
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
       {state.message ? <Alert tone="success">{state.message}</Alert> : null}
+
       <Button type="submit" disabled={pending}>
         {pending ? "در حال ثبت…" : "ثبت درخواست برداشت"}
       </Button>
@@ -83,6 +101,7 @@ export function WithdrawalForm({ balance }: { balance: number }) {
 
 export function ReviewReplyForm({ reviewId }: { reviewId: number }) {
   const [state, formAction, pending] = useActionState(replyToReviewAction, {});
+
   return (
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="reviewId" value={reviewId} />
@@ -97,6 +116,7 @@ export function ReviewReplyForm({ reviewId }: { reviewId: number }) {
 
 export function QuestionAnswerForm({ questionId }: { questionId: number }) {
   const [state, formAction, pending] = useActionState(answerQuestionAction, {});
+
   return (
     <form action={formAction} className="space-y-2">
       <input type="hidden" name="questionId" value={questionId} />
@@ -109,24 +129,60 @@ export function QuestionAnswerForm({ questionId }: { questionId: number }) {
   );
 }
 
-export function StoreForm({ initial }: { initial: { storeName: string; tagline: string | null; bio: string | null } }) {
+export function StoreForm({
+  initial,
+}: {
+  initial: {
+    storeName: string;
+    tagline: string | null;
+    bio: string | null;
+  };
+}) {
   const [state, formAction, pending] = useActionState(updateStoreAction, {});
+  const [storeName, setStoreName] = useState(initial.storeName);
+  const [tagline, setTagline] = useState(initial.tagline ?? "");
+  const [bio, setBio] = useState(initial.bio ?? "");
+
   return (
-    <form action={formAction} className="max-w-xl space-y-4 rounded-2xl border border-slate-200 bg-white p-5">
+    <form
+      action={formAction}
+      className="max-w-xl space-y-4 rounded-2xl border border-slate-200 bg-white p-5"
+    >
       <h2 className="font-semibold text-slate-900">اطلاعات فروشگاه</h2>
+
       <Field label="نام فروشگاه" htmlFor="storeName">
-        <Input id="storeName" name="storeName" defaultValue={initial.storeName} required />
+        <Input
+          id="storeName"
+          name="storeName"
+          value={storeName}
+          onChange={(event) => setStoreName(event.target.value)}
+          required
+        />
       </Field>
+
       <Field label="شعار فروشگاه" htmlFor="tagline">
-        <Input id="tagline" name="tagline" defaultValue={initial.tagline ?? ""} />
+        <Input
+          id="tagline"
+          name="tagline"
+          value={tagline}
+          onChange={(event) => setTagline(event.target.value)}
+        />
       </Field>
+
       <Field label="معرفی فروشگاه" htmlFor="bio">
-        <Textarea id="bio" name="bio" defaultValue={initial.bio ?? ""} />
+        <Textarea
+          id="bio"
+          name="bio"
+          value={bio}
+          onChange={(event) => setBio(event.target.value)}
+        />
       </Field>
+
       {state.error ? <Alert tone="danger">{state.error}</Alert> : null}
       {state.message ? <Alert tone="success">{state.message}</Alert> : null}
+
       <Button type="submit" disabled={pending}>
-        ذخیره
+        {pending ? "در حال ذخیره…" : "ذخیره"}
       </Button>
     </form>
   );

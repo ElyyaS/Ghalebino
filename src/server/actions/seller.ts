@@ -324,23 +324,37 @@ export async function requestWithdrawalAction(_prev: FormState, formData: FormDa
 export async function updateStoreAction(_prev: FormState, formData: FormData): Promise<FormState> {
   try {
     const seller = await requireSeller();
+
     const parsed = sellerStoreSchema.safeParse({
       storeName: formData.get("storeName"),
       tagline: formData.get("tagline"),
       bio: formData.get("bio"),
     });
-    if (!parsed.success) return { error: firstErrorMessage(parsed.error) };
-    await db
+
+    if (!parsed.success) {
+      return { error: firstErrorMessage(parsed.error) };
+    }
+
+    const [updatedSeller] = await db
       .update(sellers)
       .set({
         storeName: parsed.data.storeName,
         tagline: parsed.data.tagline,
         bio: parsed.data.bio,
       })
-      .where(eq(sellers.id, seller.id));
+      .where(eq(sellers.id, seller.id))
+      .returning({
+        id: sellers.id,
+      });
+
+    if (!updatedSeller) {
+      return { error: "فروشگاه یافت نشد." };
+    }
+
     return { message: "اطلاعات فروشگاه ذخیره شد." };
   } catch (err) {
     if (err instanceof AppError) return { error: err.message };
+    console.error("[update-store]", err);
     return { error: "خطایی رخ داد." };
   }
 }
