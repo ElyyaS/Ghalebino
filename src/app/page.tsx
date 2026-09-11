@@ -8,11 +8,9 @@ import {
   Zap,
 } from "lucide-react";
 import { ProductGrid } from "@/components/product/product-listing";
-import {
-  mockCategories,
-  mockTechnologies,
-  mockSellers,
-} from "@/server/mock-data";
+import { toPublicCategorySlug } from "@/lib/category-slugs";
+import { getCategories } from "@/server/queries";
+import { mockTechnologies, mockSellers } from "@/server/mock-data";
 export const dynamic = "force-dynamic";
 
 function SectionHeader({ title, href }: { title: string; href: string }) {
@@ -30,7 +28,7 @@ function SectionHeader({ title, href }: { title: string; href: string }) {
 }
 
 export default async function HomePage() {
-  const categories = mockCategories;
+  const categories = await getCategories();
   const technologies = mockTechnologies;
   const sellers = mockSellers;
   const blog: typeof import("@/server/mock-db").mockBlogPosts = [];
@@ -103,21 +101,27 @@ export default async function HomePage() {
           <SectionHeader title="دسته‌بندی‌های محبوب" href="/marketplace" />
 
           <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 lg:grid-cols-6">
-            {categories.slice(0, 6).map((c) => (
-              <Link
-                key={c.id}
-                href={`/categories/${c.slug}`}
-                className="group flex flex-col items-center gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-center transition-all hover:border-brand-300 hover:shadow-sm"
-              >
-                <span className="grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 text-lg font-bold text-white">
-                  {c.name.slice(0, 1)}
-                </span>
+            {categories.slice(0, 6).map((c) => {
+              const slug = toPublicCategorySlug(c.slug);
 
-                <span className="text-sm font-medium text-slate-700 group-hover:text-brand-700">
-                  {c.name}
-                </span>
-              </Link>
-            ))}
+              if (!slug) return null;
+
+              return (
+                <Link
+                  key={c.id}
+                  href={`/categories/${slug}`}
+                  className="group flex flex-col items-center gap-3 rounded-2xl border border-slate-200 bg-white p-5 text-center transition-all hover:border-brand-300 hover:shadow-sm"
+                >
+                  <span className="grid h-12 w-12 place-items-center rounded-xl bg-gradient-to-br from-brand-500 to-accent-500 text-lg font-bold text-white">
+                    {c.name.slice(0, 1)}
+                  </span>
+
+                  <span className="text-sm font-medium text-slate-700 group-hover:text-brand-700">
+                    {c.name}
+                  </span>
+                </Link>
+              );
+            })}
           </div>
         </section>
 

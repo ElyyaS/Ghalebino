@@ -261,7 +261,6 @@ export function UserMenu({
   > <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
       {user.name.slice(0, 1)} </span>
 
-    ```
     < ChevronDown
       className={
         cn(
@@ -408,7 +407,6 @@ export function MobileMenu({
         aria-expanded={open}
       > <Menu className="h-5 w-5" /> </button>
 
-      ```
       {open ? (
         <div className="fixed inset-0 z-50 lg:hidden">
           <button
