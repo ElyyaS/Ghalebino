@@ -50,7 +50,6 @@ export function SearchBar() {
     const value = query.trim();
 
     if (!value) {
-      setSuggestions([]);
       return;
     }
 
@@ -107,6 +106,17 @@ export function SearchBar() {
 
   }, []);
 
+  function handleQueryChange(value: string) {
+    setQuery(value);
+
+    if (!value.trim()) {
+      setSuggestions([]);
+    }
+
+    setOpen(true);
+
+  }
+
   function handleSubmit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
@@ -129,10 +139,7 @@ export function SearchBar() {
 
     <input
       value={query}
-      onChange={(event) => {
-        setQuery(event.target.value);
-        setOpen(true);
-      }}
+      onChange={(event) => handleQueryChange(event.target.value)}
       onFocus={() => setOpen(true)}
       placeholder="جستجوی قالب، تکنولوژی، فروشنده…"
       className="h-10 w-44 rounded-lg border border-slate-200 bg-slate-50 pl-3 pr-9 text-sm transition-all placeholder:text-slate-400 focus:w-64 focus:border-brand-500 focus:bg-white focus:outline-none focus:ring-2 focus:ring-brand-500/30 lg:w-64"
@@ -183,16 +190,9 @@ export function UserMenu({
   user: HeaderUser | null;
   unread: number;
 }) {
-  const pathname = usePathname();
   const ref = useRef<HTMLDivElement>(null);
 
   const [open, setOpen] = useState(false);
-
-  const userKey = user ? `${user.id}:${user.role}` : "guest";
-
-  useEffect(() => {
-    setOpen(false);
-  }, [userKey, pathname]);
 
   useEffect(() => {
     function handleDocumentClick(event: MouseEvent) {
@@ -227,7 +227,6 @@ export function UserMenu({
       </Link>
     </div>
     );
-
   }
 
   const dashboardHref =
@@ -262,89 +261,93 @@ export function UserMenu({
   > <span className="grid h-7 w-7 place-items-center rounded-full bg-brand-100 text-xs font-semibold text-brand-700">
       {user.name.slice(0, 1)} </span>
 
-    <ChevronDown
-      className={cn(
-        "hidden h-4 w-4 text-slate-400 transition-transform sm:block",
-        open && "rotate-180",
-      )}
+    < ChevronDown
+      className={
+        cn(
+          "hidden h-4 w-4 text-slate-400 transition-transform sm:block",
+          open && "rotate-180",
+        )
+      }
     />
-  </button>
+  </button >
 
-    {open ? (
-      <div
-        className="absolute left-0 top-12 z-50 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
-        role="menu"
-      >
-        <div className="border-b border-slate-100 px-4 py-3">
-          <p className="truncate text-sm font-semibold text-slate-900">
-            {user.name}
-          </p>
+    {
+      open ? (
+        <div
+          className="absolute left-0 top-12 z-50 w-60 overflow-hidden rounded-xl border border-slate-200 bg-white shadow-lg"
+          role="menu"
+        >
+          <div className="border-b border-slate-100 px-4 py-3">
+            <p className="truncate text-sm font-semibold text-slate-900">
+              {user.name}
+            </p>
 
-          <p className="text-xs text-slate-500">
-            {user.role === "ADMIN"
-              ? "مدیر"
-              : user.role === "SELLER"
-                ? "فروشنده"
-                : "مشتری"}
-          </p>
-        </div>
+            <p className="text-xs text-slate-500">
+              {user.role === "ADMIN"
+                ? "مدیر"
+                : user.role === "SELLER"
+                  ? "فروشنده"
+                  : "مشتری"}
+            </p>
+          </div>
 
-        <div className="p-1.5 text-sm">
-          <MenuItem
-            href={dashboardHref}
-            icon={<LayoutDashboard className="h-4 w-4" />}
-            label="داشبورد"
-            onClick={closeMenu}
-          />
-
-          <MenuItem
-            href={notificationsHref}
-            icon={<Bell className="h-4 w-4" />}
-            label="اعلان‌ها"
-            badge={unread}
-            onClick={closeMenu}
-          />
-
-          {user.role === "CUSTOMER" ? (
-            <>
-              <MenuItem
-                href="/dashboard/customer/wishlist"
-                icon={<Heart className="h-4 w-4" />}
-                label="علاقه‌مندی‌ها"
-                onClick={closeMenu}
-              />
-
-              <MenuItem
-                href="/dashboard/customer/orders"
-                icon={<Package className="h-4 w-4" />}
-                label="سفارش‌ها"
-                onClick={closeMenu}
-              />
-            </>
-          ) : null}
-
-          {user.role === "SELLER" ? (
+          <div className="p-1.5 text-sm">
             <MenuItem
-              href="/dashboard/seller/products"
-              icon={<Store className="h-4 w-4" />}
-              label="محصولات من"
+              href={dashboardHref}
+              icon={<LayoutDashboard className="h-4 w-4" />}
+              label="داشبورد"
               onClick={closeMenu}
             />
-          ) : null}
 
-          <form action={logoutAction}>
-            <button
-              type="submit"
-              className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-slate-700 transition-colors hover:bg-rose-50 hover:text-rose-700"
-            >
-              <LogOut className="h-4 w-4" />
-              خروج از حساب
-            </button>
-          </form>
+            <MenuItem
+              href={notificationsHref}
+              icon={<Bell className="h-4 w-4" />}
+              label="اعلان‌ها"
+              badge={unread}
+              onClick={closeMenu}
+            />
+
+            {user.role === "CUSTOMER" ? (
+              <>
+                <MenuItem
+                  href="/dashboard/customer/wishlist"
+                  icon={<Heart className="h-4 w-4" />}
+                  label="علاقه‌مندی‌ها"
+                  onClick={closeMenu}
+                />
+
+                <MenuItem
+                  href="/dashboard/customer/orders"
+                  icon={<Package className="h-4 w-4" />}
+                  label="سفارش‌ها"
+                  onClick={closeMenu}
+                />
+              </>
+            ) : null}
+
+            {user.role === "SELLER" ? (
+              <MenuItem
+                href="/dashboard/seller/products"
+                icon={<Store className="h-4 w-4" />}
+                label="محصولات من"
+                onClick={closeMenu}
+              />
+            ) : null}
+
+            <form action={logoutAction}>
+              <button
+                type="submit"
+                className="flex w-full items-center gap-2.5 rounded-lg px-3 py-2 text-slate-700 transition-colors hover:bg-rose-50 hover:text-rose-700"
+              >
+                <LogOut className="h-4 w-4" />
+                خروج از حساب
+              </button>
+            </form>
+          </div>
         </div>
-      </div>
-    ) : null}
-  </div>
+      ) : null
+    }
+  </div >
 
   );
 }
@@ -388,12 +391,7 @@ export function MobileMenu({
   categories: Category[];
   user: HeaderUser | null;
 }) {
-  const pathname = usePathname();
   const [open, setOpen] = useState(false);
-
-  useEffect(() => {
-    setOpen(false);
-  }, [pathname, user?.id]);
 
   function closeMenu() {
     setOpen(false);

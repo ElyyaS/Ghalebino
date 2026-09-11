@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useEffect, useState } from "react";
+import { useActionState, useState } from "react";
 import { loginAction } from "@/server/actions/auth";
 import { AuthCard } from "@/components/auth/auth-card";
 import { Button } from "@/components/ui/button";
@@ -13,11 +13,10 @@ export default function LoginForm() {
     const [email, setEmail] = useState("");
     const [password, setPassword] = useState("");
 
-    useEffect(() => {
-        if (state.error) {
-            setPassword("");
-        }
-    }, [state.error]);
+    function handleAction(formData: FormData) {
+        setPassword("");
+        formAction(formData);
+    }
 
     return (
         <AuthCard
@@ -32,19 +31,20 @@ export default function LoginForm() {
                         ثبت‌نام کنید </Link>
                 </>
             }
-        > <form action={formAction} className="space-y-4"> <Field label="ایمیل" htmlFor="email">
+        > <form action={handleAction} className="space-y-4"> <Field label="ایمیل" htmlFor="email">
             <Input
                 id="email"
                 name="email"
                 type="email"
                 dir="ltr"
-                placeholder="you@example.com"
+                placeholder="[you@example.com](mailto:you@example.com)"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
                 autoComplete="email"
                 required
             /> </Field>
 
+                ```
                 <Field label="رمز عبور" htmlFor="password">
                     <Input
                         id="password"
@@ -74,6 +74,5 @@ export default function LoginForm() {
                 </Button>
             </form>
         </AuthCard>
-
     );
 }

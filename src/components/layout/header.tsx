@@ -9,10 +9,11 @@ import {
 } from "./header-actions";
 
 import { getSessionUser, getCartOwner } from "@/lib/auth";
-import { mockCategories } from "@/server/mock-data";
+import { toPublicCategorySlug } from "@/lib/category-slugs";
 
 import {
   getCartLines,
+  getCategories,
   getUnreadNotificationCount,
 } from "@/server/queries";
 
@@ -34,7 +35,7 @@ export async function Header() {
       }
     : null;
 
-  const categories = mockCategories;
+  const categories = await getCategories();
   const owner = await getCartOwner(false);
 
   const [lines, unread] = await Promise.all([
@@ -42,10 +43,18 @@ export async function Header() {
     user ? getUnreadNotificationCount(user.id) : Promise.resolve(0),
   ]);
 
+  const publicCategories = categories
+    .map((category) => {
+      const slug = toPublicCategorySlug(category.slug);
+
+      return slug ? { ...category, slug } : null;
+    })
+    .filter((category): category is NonNullable<typeof category> => category !== null);
+
   return (
     <header className="sticky top-0 z-40 border-b border-slate-200 bg-white/90 backdrop-blur">
       <div className="mx-auto flex h-16 max-w-7xl items-center gap-2 px-4 sm:gap-3">
-        <MobileMenu categories={categories} user={headerUser} />
+        <MobileMenu categories={publicCategories} user={headerUser} />
 
         <Link href="/" className="flex shrink-0 items-center gap-2">
           <span className="grid h-9 w-9 place-items-center rounded-xl bg-gradient-to-br from-brand-600 to-accent-500 text-white">
